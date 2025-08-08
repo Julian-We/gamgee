@@ -1,7 +1,7 @@
 import os
 import re
 from micro_sam.automatic_segmentation import get_predictor_and_segmenter, automatic_instance_segmentation
-from segumentu.utils import upsampling
+from .utils import upsampling
 from skimage.transform import resize
 from skimage import restoration
 import numpy as np
