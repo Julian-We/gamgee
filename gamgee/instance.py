@@ -1,4 +1,4 @@
-from segumentu.segmenter import SegmentationModel
+from .segmenter import SegmentationModel
 import numpy as np
 from skimage import measure, restoration
 import pickle
@@ -30,7 +30,7 @@ class ModelHandler:
         "cell_nls": SegmentationModel('/Users/julian/Documents/General Science/Programming/py/general_analysis/20250325_cellpose-retrain/sam_cell_large_refined/models/checkpoints/sam_cell_refined_up2_33315528',
                                       model_type='vit_l_lm',
                                       friendly_name='µSAM Cell (NLS) model'),
-        "granules": SegmentationModel('/Users/julian/Documents/General Science/Programming/py/general_analysis/20250325_cellpose-retrain/sam_granule_large_refined/models/checkpoints/sam_granules_refined_up3_33373725',
+        "granules": SegmentationModel(path='/Users/julian/Documents/General Science/Programming/py/general_analysis/20250325_cellpose-retrain/sam_granule_large_refined/models/checkpoints/sam_granules_refined_up3_33314058',
                                       model_type='vit_l_lm',
                                       friendly_name='µSAM Granules model'),
         }
@@ -297,3 +297,10 @@ class TheCell:
                 print(f"Error during segmentation for tag {tag}: {e}")
                 self.logs[tag].update({"Error": str(e)})
 
+    def main(self, loader_dict:dict = None, model_handler:ModelHandler = None, **kwargs):
+        """
+        Main method to run the cell instance.
+        This method will call the
+        """
+        #TODO: Implement main method to run the cell instance. After segmentation and before feature extraction, check
+        # if the segmentation throw out segmentations that are not in the cell boundary
