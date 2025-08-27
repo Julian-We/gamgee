@@ -13,13 +13,18 @@ __author__ = "Julian Wegner"
 
 # Core imports
 from .instance import ModelHandler
-from .instance import TheCell
+from .segmenter import SegmentationModel
+from .features import catch_error
 
 # Utility functions
-from .utils import upsampling
+from .utils.utils import upsampling
+from .utils.denoising import get_shared_memory_info
+from .utils.memory_sharer import *
 
 __all__ = [
     "ModelHandler",
-    "TheCell",
+    "SegmentationModel",
+    "catch_error",
     "upsampling",
+    "get_shared_memory_info",
 ]

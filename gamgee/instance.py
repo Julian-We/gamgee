@@ -1,4 +1,5 @@
 from .segmenter import SegmentationModel
+from .denoising_interface import care_denoising
 import numpy as np
 from skimage import measure, restoration
 import pickle
@@ -218,12 +219,13 @@ class TheCell:
             if kwargs.get('verbose', True):
                 print("No model handler provided. Using default model handler.")
 
-        self.populator(loader_dict, model_handler)
+        self.populator(loader_dict, model_handler, **kwargs)
 
-    def populator(self, loader_dict:dict, model_handler:ModelHandler):
+    def populator(self, loader_dict:dict, model_handler:ModelHandler,
+                  care_denoise:bool = True,
+                  **kwargs):
         if model_handler is None:
             raise ValueError("Module handler cannot be None.")
-
         for key, value in loader_dict.items():
             self.paths[key] = Path(value[0])
             self.raw_images[key] = self.imread(value[0])
@@ -236,14 +238,12 @@ class TheCell:
                 raise ValueError(f"<{Path(value[0]).name}>Model {value[1]} not found in model handler.")
 
 
-            if len(value) > 2 and isinstance(value[2], dict):
-                self.images_for_segmentation[key] = self.image_restauration(self.raw_images[key], **value[2])
-            else:
-                self.images_for_segmentation[key] = self.raw_images[key]
+
+        self.images_for_segmentation = care_denoising(self.raw_images) if care_denoise else self.raw_images
 
     @staticmethod
     def image_restauration(
-                    image: str,
+                    image: type(np.ndarray),
                     rolling_ball: bool = False,
                     rolling_ball_radius: int = 60,
                     non_local_means: bool = False,
