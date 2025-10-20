@@ -1,4 +1,7 @@
 import numpy as np
+from pathlib import Path
+from PIL import Image
+import tifffile as tiff
 
 def upsampling(image, scale_factor):
     """
@@ -80,3 +83,32 @@ def preprocess(image_data, upsample_factor=3, final_size=450, verbose=False):
         upsampled_image = upsampled_image.astype(np.uint8)
 
     return upsampled_image
+
+def imread(path) -> np.ndarray:
+    """Read an image from a given path.
+    Args:
+        path (Path): Path to the image file.
+
+    Returns:
+        np.ndarray: Image data as a numpy array.
+    """
+    if not isinstance(path, Path):
+        path = Path(path)
+    if not path.is_file():
+        raise ValueError("Path is not a file.")
+
+    if path.suffix.lower() == '.tif' or path.suffix.lower() == '.tiff':
+        return tiff.imread(path)
+    elif path.suffix.lower() in ['.png', '.jpg', '.jpeg', '.bmp', '.gif']:
+        with Image.open(path) as img:
+            return np.array(img)
+    else:
+        raise ValueError(f"Unsupported file format: {path.suffix}")
+
+
+def normalize(img, percent_saturation=0.002):
+    int_cut = np.percentile(img, 100-percent_saturation)
+    normalized = img / int_cut
+    img_norm = np.clip(normalized, 0, 1)
+    img_norm_bit = img_norm * 65535
+    return img_norm_bit.astype(np.uint16)

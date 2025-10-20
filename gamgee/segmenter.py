@@ -1,5 +1,6 @@
 import os
 import re
+from pathlib import Path
 from micro_sam.automatic_segmentation import get_predictor_and_segmenter, automatic_instance_segmentation
 from .utils.utils import upsampling
 from skimage.transform import resize
@@ -10,19 +11,42 @@ import matplotlib.pyplot as plt
 
 
 class SegmentationModel:
-    def __init__(self, path, model_type="vit_b_lm", upsampling_factor=None, friendly_name=None, cell_compartment=None):
-        if path is not None and os.path.exists(path):
-            self.checkpoints_root = path if not path.endswith(os.path.sep) else path[:-1]
-            self.checkpoints = os.path.join(self.checkpoints_root, 'best.pt') if path is not None else None
+    def __init__(self, path, model_type="vit_b_lm", upsampling_factor=None, friendly_name=None, cell_compartment=None, **kwargs):
+        # Convert path to Path object if it's not None
+        if path is not None:
+            path = Path(path)
+
+        self.checkpoints = None
+
+        if path is not None and path.exists():
+            self.checkpoints_root = path
+            if path.name.lower() == 'checkpoints':
+                self.checkpoints_root = path.parent
+
+            # Define basic directories to search for checkpoints
+            search_dirs = [self.checkpoints_root, self.checkpoints_root / 'checkpoints']
+
+            # Append additional directories (subdirectories of checkpoints_root)
+            for subdir in self.checkpoints_root.iterdir():
+                if subdir.is_dir():
+                    search_dirs.append(subdir)
+
+            # Search for 'best.pt' in the defined directories
+            for directory in search_dirs:
+                candidate = directory / 'best.pt'
+                if candidate.exists():
+                    self.checkpoints = candidate
+                    break
         else:
             self.checkpoints_root = None
             self.checkpoints = None
-        self.checkpoints_name = os.path.basename(self.checkpoints_root) if self.checkpoints_root else model_type
+        self.checkpoints_name = self.checkpoints_root.name if self.checkpoints_root else model_type
         self.model_type = model_type
         if upsampling_factor is None:
             # Find the upsampling factor from the checkpoint name "up5" in a checkoints.split('_')
             s = self.checkpoints_name
-            print(s)
+            if kwargs.get('verbose', False):
+                print(s)
             match = re.search(r'up(\d+)', s)
             if match:
                 self.upsampling_factor = int(match.group(1))
@@ -32,13 +56,14 @@ class SegmentationModel:
             self.upsampling_factor = upsampling_factor
         self.model_type = model_type
         if path is None:
-            print("No checkpoint path provided, using default model.")
+            if kwargs.get('verbose', False):
+                print("No checkpoint path provided, using default model.")
             self.predictor, self.segmenter = get_predictor_and_segmenter(
                 model_type=self.model_type
             )
         else:
             self.predictor, self.segmenter = get_predictor_and_segmenter(
-                checkpoint=self.checkpoints,
+                checkpoint=str(self.checkpoints),
                 model_type=self.model_type
             )
 
@@ -88,8 +113,8 @@ class SegmentationModel:
         :return: Dictionary containing model information.
         """
         return {
-            "checkpoints_root": self.checkpoints_root,
-            "checkpoints": self.checkpoints,
+            "checkpoints_root": str(self.checkpoints_root) if self.checkpoints_root else None,
+            "checkpoints": str(self.checkpoints) if self.checkpoints else None,
             "checkpoints_name": self.checkpoints_name,
             "friendly_name": self.friendly_name,
             "model_type": self.model_type,
@@ -152,7 +177,8 @@ class SegmentationInstance:
             ax.axis('off')
         # plt.tight_layout()
         if export_path:
-            plt.savefig(os.path.join(export_path, f'{hex(np.random.randint(0, 10000))}.png'), dpi=300)
+            export_path = Path(export_path)
+            plt.savefig(export_path / f'{hex(np.random.randint(0, 10000))}.png', dpi=300)
             plt.close(fig)
 
         self.segmentation = comparison_results

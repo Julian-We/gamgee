@@ -4,7 +4,7 @@ import functools
 from typing import Callable, Union, Any
 from skimage import measure
 from scipy.fft import fft
-
+from skimage.measure import regionprops
 
 def catch_error(default_value: Union[float, tuple, list] = np.nan):
     """
@@ -114,8 +114,7 @@ def spherical_volume(granule_label_image):
 
 
 
-from skimage.measure import regionprops
-import numpy as np
+
 
 
 @catch_error()
