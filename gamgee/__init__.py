@@ -15,11 +15,16 @@ __author__ = "Julian Wegner"
 from .instance import ModelHandler
 from .segmenter import SegmentationModel
 from .features import catch_error
+from .denoising_interface import denoise_with_care
+from .instance.thecell import TheCell
+from .instance.modelhandler import ModelHandler
+from .instance.marker import Marker
+
 
 # Utility functions
 from .utils.utils import upsampling
-from .utils.denoising import get_shared_memory_info
-from .utils.memory_sharer import *
+from .utils.denoising import get_shared_memory_info, encode_memmap_info, get_memmap_info
+
 
 __all__ = [
     "ModelHandler",
