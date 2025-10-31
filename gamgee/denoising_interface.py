@@ -69,4 +69,4 @@ def denoise_with_care(markers: list, model_name='20250812_JW_granule_25'):
             Path(memmap_info['filepath']).unlink()
         except Exception as e:
             print(f"Warning: Could not delete temporary file {memmap_info['filepath']}: {e}")
-        marker.logs['preprocessing'].append(f"Denoised with CARE model {model_name}")
+        marker.logs['Preprocessing'].append(f"Denoised with CARE model {model_name}")

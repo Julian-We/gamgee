@@ -9,6 +9,7 @@ from skimage.util import img_as_float32, img_as_ubyte
 from skimage.exposure import rescale_intensity
 from .modelhandler import ModelHandler
 from gamgee.utils.utils import normalize
+import gamgee.features as features_module
 
 class Marker:
     def __init__(self, name: str, parent_name: str, parent_id: str, parent_root: Path, model_handler=None,
@@ -63,11 +64,10 @@ class Marker:
         self.segmentation = None
 
         self.identify_image()
-
         self.preprocess()
 
         # Generate freatue dictionary. Keys should be feature names, values the corresponding values or a list of values
-        self.features = []
+        self.features = None
 
 
 
@@ -234,11 +234,14 @@ class Marker:
         self.logs["Segmentation Info"] = self.sam_model.get_model_info()
         self.logs["Segmentation Shape"] = self.segmentation.shape
 
+        self.features = self.get_features()
+
     def get_features(self, **kwargs):
         if self.segmentation is None:
             raise ValueError("Segmentation is not available for feature extraction.")
-        features = measure.regionprops_table(self.segmentation, intensity_image=self.denoised_image,
-                                             properties=['label', 'area', 'centroid', 'mean_intensity', 'max_intensity',
-                                                         'min_intensity', 'eccentricity', 'solidity', 'extent'],
-                                             **kwargs)
-        return features
+        return {
+            "Marker Name": self.name,
+            "Compartment": self.compartment,
+            "BasicMorphology": features_module.basic_granule_features(self.segmentation),
+            "IntensityFeatures": features_module.intensity_granule_features(self.raw_image, self.segmentation)
+        }
