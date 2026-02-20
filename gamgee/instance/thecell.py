@@ -20,8 +20,8 @@ def load_instance(instance_path: str):
 
 
 class TheCell:
-    def __init__(self, root_path: str, model_handler: ModelHandler,
-                 name=None, blacklist=None, refine_segmentations=True, **kwargs):
+    def __init__(self, root_path: str|Path, model_handler: ModelHandler,
+                 name=None, blacklist=None, refine_segmentations=True, uid=None, **kwargs):
         """Initialize a cell instance.
         Args:
             name (str): Name of the cell.
@@ -35,7 +35,7 @@ class TheCell:
         self.output_root = self.root / 'output'
         self.output_root.mkdir(exist_ok=True, parents=True)
         self.name = name if name is not None else self.root.name
-        self.cell_id = uuid.uuid4().hex
+        self.cell_id = uuid.uuid4().hex if uid is None else uid
         self.all_features = {}
 
         # Default blacklist for common non-marker folders
@@ -63,53 +63,87 @@ class TheCell:
         #     self.refine_segmentations()
         self.plot_markers_and_segmentations()
 
+        self.save_segmentations()
+
     def _scan_and_create_markers(self):
-        """Scan root directory for folders containing single image files and create Marker objects."""
+        """Scan root directory directly for image files. If none found, look for subfolders containing single image files."""
         if not self.root.exists():
             raise ValueError(f"Root path {self.root} does not exist.")
 
         # Check for "raw" or "MIP" subfolders
-        potential_subfolders = ['raw', 'mip', 'mips']
+        potential_subfolders = ['raw', 'mip', 'mips', 'imgs']
         for subfolder in self.image_root.iterdir():
             if subfolder.is_dir() and subfolder.name.lower() in potential_subfolders:
                 self.image_root = subfolder
+                print(f"Found subfolder '{subfolder.name}' for images. Updating image root to {self.image_root}")
                 break
 
 
         valid_extensions = ['.tif', '.tiff', '.png', '.jpg', '.jpeg', '.bmp', '.gif']
 
-        for folder in self.image_root.iterdir():
-            if not folder.is_dir():
-                continue
-
-            # Skip blacklisted folders
-            if folder.name in self.blacklist:
-                continue
-            # Find image files in the folder
-            image_files = [f for f in folder.iterdir()
-                          if f.is_file() and f.suffix.lower() in valid_extensions]
-
-            # Only create marker if exactly one image file is found
-            if len(image_files) == 1:
+        # Scan for images in root directory
+        image_files = [f for f in self.image_root.iterdir()
+                       if f.is_file() and f.suffix.lower() in valid_extensions and not f.name.startswith(".")]
+        print(f"Found {len(image_files)} image files in root directory {self.image_root}")
+        if image_files:
+            for image_file in image_files:
                 try:
+                    marker_name = image_file.stem if not "nls" in image_file.stem.lower() else "nls_nucleus"
                     marker = Marker(
-                        name=folder.name,
+                        image_path=image_file,
                         parent_name=self.name,
                         parent_id=self.cell_id,
-                        parent_root=self.image_root,
                         model_handler=self.model_handler
                     )
-                    self.markers[folder.name] = marker
-                    self.logs[f"Marker_{folder.name}"] = "Created successfully"
+                    self.markers[marker_name] = marker
+                    self.logs[f"Marker_{marker_name}"] = "Created successfully"
+                    if "nls" in marker_name.lower():
+                        print(image_file)
+                        marker_name = f"{marker_name}_cell"
+                        marker = Marker(
+                            image_path=image_file,
+                            parent_name=self.name,
+                            parent_id=self.cell_id,
+                            model_handler=self.model_handler,
+                            compartment="cell")
+                        self.markers[marker_name] = marker
+                        self.markers_compartments[marker_name] = "cell"
+                        self.logs[f"Marker_{marker_name}"] = "Created as cell compartment based on name"
+
                 except Exception as e:
                     print(e)
-                    self.logs[f"Marker_{folder.name}_Error"] = str(e)
-            elif len(image_files) == 0:
-                self.logs[f"Folder_{folder.name}"] = "No image files found"
-                print(f"Warning: No image files found in folder {folder}")
-            else:
-                self.logs[f"Folder_{folder.name}"] = f"Multiple image files found ({len(image_files)})"
-                print(f"Warning: Multiple image files found in folder {folder}, skipping.")
+                    self.logs[f"Marker_{marker_name}_Error"] = str(e)
+        else:
+            self.logs["Image.Root"] = "No image files found in root directory"
+            print(f"Warning: No image files found in root directory {self.image_root}")
+
+            # Scan for folders containing single image files
+            for folder in self.image_root.iterdir():
+                if folder.is_dir() and folder.name not in self.blacklist:
+                    image_files = [f for f in folder.iterdir()
+                                   if f.is_file() and f.suffix.lower() in valid_extensions]
+                    if len(image_files) == 1:
+                        try:
+                            marker_name = folder.name
+                            marker = Marker(
+                                name=marker_name,
+                                parent_name=self.name,
+                                parent_id=self.cell_id,
+                                parent_root=self.image_root,
+                                model_handler=self.model_handler
+                            )
+                            self.markers[marker_name] = marker
+                            self.logs[f"Marker_{marker_name}"] = "Created successfully"
+                        except Exception as e:
+                            print(e)
+                            self.logs[f"Marker_{marker_name}_Error"] = str(e)
+                    elif len(image_files) == 0:
+                        self.logs[f"Folder_{folder.name}"] = "No image files found"
+                        print(f"Warning: No image files found in folder {folder}")
+                    else:
+                        self.logs[f"Folder_{folder.name}"] = f"Multiple image files found ({len(image_files)})"
+                        print(f"Warning: Multiple image files found in folder {folder}, skipping.")
+
 
     def denoise(self, use_tv_denoising=False, max_workers=None):
         """Denoise all markers in parallel.
@@ -177,17 +211,9 @@ class TheCell:
 
 
 
-
-
-
-
-
-
-
-
-
     def save_segmentations(self):
         """Save segmentation masks for all markers."""
+        print(f"The markers are{self.markers.keys()}")
         for marker_name, marker in self.markers.items():
             seg_out_dir = self.root / 'segmentations' / marker.name
             seg_out_dir.mkdir(parents=True, exist_ok=True)
@@ -230,8 +256,22 @@ class TheCell:
 
     def save_instance(self):
         """Save the entire TheCell instance to a pickle file."""
-        instance_path = self.output_root / f"{self.name}_TheCell_instance.pkl"
+        instance_path = self.output_root / f"{self.cell_id}_TheCell_instance.pkl"
         with open(instance_path, 'wb') as f:
             pickle.dump(self, f)
         print(f"TheCell instance saved to {instance_path}")
+
+    def pickle_images(self):
+        """Per Marker save raw, denoised and segmentation images, in one pickle file per TheCell"""
+        images_data = {}
+        for marker_name, marker in self.markers.items():
+            images_data[marker_name] = {
+                "raw_image": marker.raw_image,
+                "denoised_image": marker.denoised_image,
+                "segmentation": marker.segmentation
+            }
+        images_path = self.output_root / f"{self.cell_id}_TheCell_images.pkl"
+        with open(images_path, 'wb') as f:
+            pickle.dump(images_data, f)
+        print(f"Marker images saved to {images_path}")
 

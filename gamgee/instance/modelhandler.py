@@ -24,17 +24,20 @@ class ModelHandler:
                                            friendly_name='µSAM Cell (Membrane) model',
                                            upsampling_factor=1,
                                            cell_compartment='cell'),
-        "nucleus_nls":      dict(path=_MODELS_DIR / 'nls_nucleus' / 'sam_large_blobs_up1_35482221',
+        "nucleus_nls":      #dict(path=_MODELS_DIR / 'nls_nucleus' / 'sam_large_blobs_up1_35482221',
+                            dict(path="/Users/julian/local_files/microSAM/sam_large_blobs_up1_35560455",
                                          model_type='vit_l_lm',
                                          friendly_name='µSAM Nucleus (NLS) model',
                                          cell_compartment='nucleus',
                                          upsampling_factor=1),
-        "cell_nls": dict(path=_MODELS_DIR / 'nls_cell' / 'sam_large_blobs_up1_35482220',
+        "cell_nls": #dict(path=_MODELS_DIR / 'nls_cell' / 'sam_large_blobs_up1_35482220',
+                    dict(path="/Users/julian/local_files/microSAM/sam_large_blobs_up1_35560456",
                                       model_type='vit_l_lm',
                                       friendly_name='µSAM Cell (NLS) model',
                                       cell_compartment='cell',
                                       upsampling_factor=1),
-        "granules": dict(path=_MODELS_DIR / 'granules' / 'sam_granules_refined_up3_35416497',
+        "granules": dict(path=_MODELS_DIR / 'granules' / 'sam_granules_refined_up3_34917658',
+                    # dict(path="/Users/julian/local_files/microSAM/sam_granules_refined_up3_35416497",
                                       model_type='vit_l_lm',
                                       friendly_name='µSAM Granules model',
                                       cell_compartment='granules',
@@ -63,7 +66,8 @@ class ModelHandler:
                   model_path: str,
                   model_type: str = 'vit_b_lm',
                   friendly_name: str = None,
-                  cell_compartment: str = None):
+                  cell_compartment: str = None,
+                  **kwargs):
         """Add a new segmentation model to the handler.
 
         Args:
@@ -80,7 +84,7 @@ class ModelHandler:
         self.segmentation_models[model_name] = SegmentationModel(Path(model_path),
                                                                  model_type=model_type,
                                                                  friendly_name=friendly_name,
-                                                                 cell_compartment=cell_compartment)
+                                                                 cell_compartment=cell_compartment, **kwargs)
         self._model_locks[model_name] = threading.Lock()
     def get_available_models(self):
         """Get a list of available segmentation models.

@@ -12,7 +12,7 @@ from gamgee.utils.utils import normalize
 import gamgee.features as features_module
 
 class Marker:
-    def __init__(self, name: str, parent_name: str, parent_id: str, parent_root: Path, model_handler=None,
+    def __init__(self, image_path:Path|str, parent_name: str, parent_id: str, model_handler=None,
                  **kwargs):
         """Initialize a marker instance.
         Args:
@@ -20,12 +20,15 @@ class Marker:
         """
 
         # Define IO attributes
+        self.image_path = image_path if image_path is not None and isinstance(image_path, Path) else Path(image_path)
+        self.image_root = self.image_path.parent if self.image_path is not None else None
+        self.name = self.image_path.stem if self.image_path is not None else None
+
         self.parent_name = parent_name
         self.parent_id = parent_id
-        self.parent_root = parent_root if parent_root is not isinstance(parent_root, Path) else Path(parent_root)
-        self.name = name
-        self.uid = uuid.uuid4().hex
-        self.root = self.parent_root / self.name
+        # self.parent_root = parent_root if parent_root is not isinstance(parent_root, Path) else Path(parent_root)
+        # self.name = name
+        self.uid = uuid.uuid4().hex[:10]
 
         self.logs = {
             "Name": self.name,
@@ -33,7 +36,6 @@ class Marker:
             "Parent ID": self.parent_id,
             "Preprocessing": []
         }
-
         # Define metadata attributes
         if not kwargs.get('compartment', False):
             self.compartment = self.set_compartment()
@@ -43,8 +45,6 @@ class Marker:
         if model_handler is None:
             model_handler = ModelHandler()
         self.set_sam_model(model_handler)
-
-
         # Define model attributes
         self.denoising_model_name = kwargs.get('denoising_model_name', None)
         if self.denoising_model_name is None:
@@ -57,7 +57,6 @@ class Marker:
             else:
                 self.denoising_model_name = None
         self.logs["Denoising Model"] = self.denoising_model_name
-
         # Define data attributes
         self.raw_image = None
         self._denoised_image = None  # Private attribute to store the actual value
@@ -65,7 +64,6 @@ class Marker:
 
         self.identify_image()
         self.preprocess()
-
         # Generate freatue dictionary. Keys should be feature names, values the corresponding values or a list of values
         self.features = None
 
@@ -93,10 +91,10 @@ class Marker:
     def set_sam_model(self, model_handler: ModelHandler):
         if self.compartment == 'granules':
             self.sam_model = model_handler.granules
-        elif self.compartment == 'cell':
+        elif self.compartment.lower() == 'cell':
             if 'membrane' in self.name.lower():
                 self.sam_model = model_handler.cell_membrane
-            elif 'cyto' in self.name.lower() or 'cell' in self.name.lower():
+            elif 'cyto' in self.name.lower() or 'cell' in self.name.lower() or 'nls' in self.name.lower():
                 self.sam_model = model_handler.cell_nls
             else:
                 self.sam_model = model_handler.large
@@ -106,17 +104,12 @@ class Marker:
             self.sam_model = model_handler.large
         self.logs["SAM Model"] = self.sam_model.friendly_name
 
-
     def identify_image(self):
-        for file in self.root.iterdir():
-            if file.suffix.lower() in ['.tif', '.tiff', '.png', '.jpg', '.jpeg', '.bmp', '.gif']:
-                self.raw_image = normalize(imread(file))
-                self.logs["Image File"] = str(file)
-                self.logs["Image Shape"] = self.raw_image.shape
-                return 'Image loaded successfully.'
-        raise ValueError(f"No image file found in directory {self.root}.")
 
-
+        self.raw_image = normalize(imread(self.image_path))
+        self.logs["Image File"] = str(self.image_path)
+        self.logs["Image Shape"] = self.raw_image.shape
+        return 'Image loaded successfully.'
 
     def preprocess(self, **kwargs):
         """Preprocess the raw image.
