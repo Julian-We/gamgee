@@ -1,0 +1,15 @@
+# Ignore model subdirectories but keep models/msam and models/care directories
+models/care/*/
+models/msam/*/
+
+# Python
+__pycache__/
+*.pyc
+
+# JetBrains / IntelliJ / PyCharm
+.idea/
+*.iml
+*.iws
+*.ipr
+.idea_modules/
+out/
