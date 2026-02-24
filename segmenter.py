@@ -70,6 +70,55 @@ class SegmentationModel:
         self.friendly_name = friendly_name if friendly_name else self.checkpoints_name
         self.cell_compartment = cell_compartment.lower() if cell_compartment else None
 
+    def _check_memory(self, image_shape):
+        """Check if sufficient device memory is available before computing embeddings.
+
+        Works for both Apple MPS (Metal) and NVIDIA CUDA devices.
+        Raises MemoryError with a descriptive message if memory is insufficient.
+        """
+        import torch
+
+        # Memory requirements per model family (conservative estimates in bytes)
+        _MODEL_MEMORY = {
+            'vit_b': 1.5 * 1024 ** 3,
+            'vit_l': 3.5 * 1024 ** 3,
+            'vit_h': 6.0 * 1024 ** 3,
+        }
+        required = next(
+            (v for k, v in _MODEL_MEMORY.items() if self.model_type.startswith(k)),
+            3.5 * 1024 ** 3,  # default to ViT-L if model type is unknown
+        )
+
+        # Add memory for the (potentially upsampled) image tensor (float32, 3 channels)
+        h, w = image_shape[:2]
+        required += (h * self.upsampling_factor) * (w * self.upsampling_factor) * 3 * 4
+
+        device = getattr(self.predictor, 'device', torch.device('cpu'))
+        device_type = str(device).split(':')[0]
+
+        if device_type == 'cuda':
+            free, _ = torch.cuda.mem_get_info(device)
+            available = free
+            device_label = f'CUDA ({torch.cuda.get_device_name(device)})'
+        elif device_type == 'mps':
+            try:
+                import psutil
+                available = psutil.virtual_memory().available - torch.mps.current_allocated_memory()
+            except ImportError:
+                return  # Cannot determine available memory without psutil; skip check
+            device_label = 'Metal (MPS)'
+        else:
+            return  # CPU has no hard VRAM limit
+
+        if available < required:
+            raise MemoryError(
+                f"Insufficient {device_label} memory to compute embeddings for "
+                f"model '{self.friendly_name}'. "
+                f"Available: {available / 1024 ** 3:.2f} GB, "
+                f"estimated required: {required / 1024 ** 3:.2f} GB. "
+                f"Try closing other applications or reducing the image size."
+            )
+
     def segment(self, image, foreground_smoothing=2.0):
         """
         Perform automatic instance segmentation on the input image.
@@ -78,6 +127,7 @@ class SegmentationModel:
         :param foreground_smoothing: Smoothing factor for the foreground.
         :return: Segmentation mask.
         """
+        self._check_memory(image.shape)
 
         if self.upsampling_factor == 1:
             # Return segmentation directly
