@@ -264,6 +264,7 @@ class TheCell:
     def pickle_images(self):
         """Per Marker save raw, denoised and segmentation images, in one pickle file per TheCell"""
         images_data = {}
+        images_data["uid"] = self.cell_id
         for marker_name, marker in self.markers.items():
             images_data[marker_name] = {
                 "raw_image": marker.raw_image,
