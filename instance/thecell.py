@@ -268,7 +268,8 @@ class TheCell:
             images_data[marker_name] = {
                 "raw_image": marker.raw_image,
                 "denoised_image": marker.denoised_image,
-                "segmentation": marker.segmentation
+                "segmentation": marker.segmentation,
+                "compartment" : marker.compartment,
             }
         images_path = self.output_root / f"{self.cell_id}_TheCell_images.pkl"
         with open(images_path, 'wb') as f:
