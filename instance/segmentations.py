@@ -100,9 +100,6 @@ def merge_segmentations(label_img, threshold=0.25, connectivity=1, min_shared=1)
 
     return new_img, mapped_merges
 
-# Example usage (commented):
-# new_labels, merges = merge_touching_segments(label_array, threshold=0.25)
-
 
 def clean_cell_segmentations(cell_segmentation):
     """
@@ -114,6 +111,7 @@ def clean_cell_segmentations(cell_segmentation):
     Returns:
 
     """
+
     segmentation = cell_segmentation.copy()
     lbl = label(segmentation)
 

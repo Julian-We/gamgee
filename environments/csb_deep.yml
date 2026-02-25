@@ -113,7 +113,7 @@ dependencies:
   - zlib=1.2.13=h18a0788_1
   - pip:
     - tifffile==2025.6.11
-    - tensorflow==2.16.0
+    - tensorflow==2.16.1
     - csbdeep==0.7.0
 
 prefix: "/opt/anaconda3/envs/csbdeep"

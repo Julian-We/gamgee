@@ -215,9 +215,9 @@ class TheCell:
         """Save segmentation masks for all markers."""
         print(f"The markers are{self.markers.keys()}")
         for marker_name, marker in self.markers.items():
-            seg_out_dir = self.root / 'segmentations' / marker.name
-            seg_out_dir.mkdir(parents=True, exist_ok=True)
-            seg_path = seg_out_dir / f"{self.name}.tif"
+            seg_out_dir = self.root / 'segmentations' / f"{marker_name}.tif"
+            seg_out_dir.parent.mkdir(parents=True, exist_ok=True)
+            seg_path = seg_out_dir
             tiff.imwrite(seg_path, marker.segmentation.astype('uint16'))
 
 
