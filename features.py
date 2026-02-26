@@ -50,72 +50,48 @@ def min_distance_to_object(binary_mask, point):
 
     # Get distance at the specific point - convert to integers for indexing
     y, x = int(round(point[0])), int(round(point[1]))
-    min_distance = distance_map[y, x]
 
-    return min_distance
+    return distance_map[y, x]
 
-def distance_to_nucleus(granule_label_img, nucleus_label_img ):
-    distance_data = []
-    for granule_idx in np.unique(granule_label_img):
-        if granule_idx == 0:  # Skip background
-            continue
-
-        # Get coordinates of the granule
-        # granule_coords = np.argwhere(granule_label_img == granule_idx)
-
-        granule_coords = get_centroid(granule_label_img == granule_idx)
-        # Calculate distance to nucleus for each pixel in the granule
-
-        y, x = granule_coords
-        distance = min_distance_to_object(nucleus_label_img > 0, (y, x))
-        distance_data.append({
-            'GranuleIndex': granule_idx,
-            'CentroidY': y,
-            'CentroidX': x,
-            'DistanceToNucleus': distance
-        })
-    return distance_data
+@catch_error()
+def edge_distance_to_nucleus(mask_of_interest, nucleus_mask):
+    """
+    Calculate the distance of a masks edge to the nucleus mask
+    """
+    mask_of_interest_distance_map = ndimage.distance_transform_edt(~mask_of_interest)
+    return min(mask_of_interest_distance_map[nucleus_mask > 0])
 
 
-def touch_area(granule_label_image, nucleus_label_image, number_dilations):
-        data = []
-        nucleus_dilated = ndimage.binary_dilation(nucleus_label_image == 1, iterations=number_dilations)
-        for granule_idx in np.unique(granule_label_image):
-            if granule_idx == 0:
-                continue
-            granule_mask = granule_label_image == granule_idx
-            granule_dilated = ndimage.binary_dilation(granule_mask, iterations=number_dilations)
-            land = np.logical_and(granule_dilated, nucleus_dilated)
+@catch_error()
+def centroid_distance_to_nucleus(mask_of_interest, nucleus_mask ):
+    """ 
+    Calculate the distance of a masks centroid to the nucleus mask
+    """
+    centroid = get_centroid(mask_of_interest)
+    return min_distance_to_object(nucleus_mask, centroid)
 
-            data.append({
-                'GranuleIndex': granule_idx,
-                'NuclearTouchArea': np.sum(land),
-                'NucleusIsTouching': True if np.sum(land) > 0 else False
-            })
-        return data
 
-def spherical_volume(granule_label_image):
+def touch_area(mask1, mask2, number_dilations):
+    """
+    Calculate the area of contact between two binary masks after dilation.
+    Args:
+        mask1: First binary mask (2D array)
+        mask2: Second binary mask (2D array)
+        number_dilations: Number of dilations to apply to both masks
+    Returns:
+        int: Area of contact in pixels
+    """
+    dilated_mask1 = ndimage.binary_dilation(mask1, iterations=number_dilations)
+    dilated_mask2 = ndimage.binary_dilation(mask2, iterations=number_dilations)
+    return np.sum(np.logical_and(dilated_mask1, dilated_mask2))
+
+def spherical_volume(mask):
     """
     Calculate the volume of a sphere given its surface area.
-    :param granule_label_image:
     :return:
     """
-    data = []
-    for granule_idx in np.unique(granule_label_image):
-        if granule_idx == 0:
-            continue
-        granule_mask = granule_label_image == granule_idx
-        area = np.sum(granule_mask)
-        (4 / 3) * np.pi * (np.sqrt(area / np.pi)) ** 3
-        data.append({
-            'GranuleIndex': granule_idx,
-            'SphericalVolume': (4 / 3) * np.pi * (np.sqrt(area / np.pi)) ** 3
-        })
-    return data
-
-
-
-
+    area = np.sum(mask)
+    return (4 / 3) * np.pi * (np.sqrt(area / np.pi)) ** 3
 
 
 @catch_error()
@@ -154,35 +130,21 @@ def get_aspect_ratio(binary_mask):
 
 # Updated ellipsoid_volume function
 @catch_error(default_value=[])
-def ellipsoid_volume(granule_label_image):
+def ellipsoid_volume(mask):
     """
     Calculate the volume of an ellipsoid given its surface area and aspect ratio.
+    returns: a tuple of (prolate_volume, oblate_volume) where:
+        - prolate_volume assumes the major axis is the longest dimension (like a rugby ball)
+        - oblate_volume assumes the minor axis is the longest dimension (like a lentil)
     """
-    data = []
 
-    for granule_idx in np.unique(granule_label_image):
-        if granule_idx == 0:
-            continue
+    area = np.sum(mask)
+    aspect_ratio = get_aspect_ratio(mask)
 
-        granule_mask = granule_label_image == granule_idx
-        area = np.sum(granule_mask)
 
-        # Get aspect ratio
-        aspect_ratio = get_aspect_ratio(granule_mask)
-
-        if np.isnan(aspect_ratio):
-            continue
-
-        # Calculate ellipsoid volumes
-        base_radius = np.sqrt(area / (np.pi * aspect_ratio))
-
-        data.append({
-            'GranuleIndex': granule_idx,
-            'EllipsoidVolumeMajor': (4 / 3) * np.pi * base_radius ** 3 * aspect_ratio,
-            'EllipsoidVolumeMinor': (4 / 3) * np.pi * base_radius ** 3 / aspect_ratio
-        })
-
-    return data
+    # Calculate ellipsoid volumes
+    base_radius = np.sqrt(area / (np.pi * aspect_ratio))
+    return (4 / 3) * np.pi * base_radius ** 3 * aspect_ratio, (4 / 3) * np.pi * base_radius ** 3 / aspect_ratio
 
 def nuclear_periphery(granule_label_image, nucleus_label_image, number_dilations):
     """
@@ -329,7 +291,7 @@ def intensity_granule_features(granule_label_image, intensity_image):
     return data
 
 
-def polar_to_fourier_series(binary_mask, n_harmonics=50):
+def polar_to_fourier_series(binary_mask, n_harmonics=25):
     """
     Generate Fourier series from polar coordinate data (angles and distances).
 
@@ -414,7 +376,7 @@ def granule_fourier_series(granule_label_image, n_harmonics=50):
         data.append(fourier_data)
     return data
 
-
+@catch_error(default_value=np.nan)
 def hexagonality(label_image):
     """Compute hexagonality of a segmentation label image.
 

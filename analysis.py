@@ -1,11 +1,14 @@
 import sys
+from features import edge_distance_to_nucleus, spherical_volume
 import numpy as np
 sys.path.append("/Users/icb_remote/Documents/JW/py/packages/")
 import pickle
 from pathlib import Path
 from matplotlib import pyplot as plt
 import datetime
+from skimage.measure import regionprops, label
 from gamgee.instance.segmentations import delete_outside_objects, merge_segmentations
+from gamgee import features
 from multiprocessing import Pool
 
 
@@ -43,6 +46,9 @@ class Sample:
         self.root_dir = Path(path) if not isinstance(path, Path) else path
         self._unupickle()
         self.clean_up_segmentations()
+
+        self.per_granule_results = []
+        self.detailed_results = []
 
     def log(self, message: str):
         self.logs[datetime.datetime.now().isoformat()] = message
@@ -190,5 +196,69 @@ class Sample:
         for marker in nls_markers:
             if self.segmentations[marker] is not None:
                 ax[i+1].contour(self.segmentations[marker], colors='r', linewidths=0.5)
+    
+    def extract_features(self):
+        """
+        Extract features for each granule. For each granule, the following features are extracted:
+        """
 
+        if self.lock:
+            self.log("Sample is locked. Cannot extract features.")
+            return
+        
+    
+        # Get the name of the nucleus marker
+        nucleus_marker = next((mrk for mrk, cmp in self.compartments.items() if "nucleus" in cmp.lower()), None)
+        nucleus_mask = self.segmentations[nucleus_marker] > 0
 
+        for marker in self.markers:
+            lbl = self.segmentations[marker]
+            region_props = regionprops(lbl, intensity_image=self.images[marker])
+            
+            # Marker wide values
+            number_of_segmentations = len(region_props)
+            hexagonality = features.hexagonality(lbl)
+
+            for region in region_props:
+                marker_result_dict = {
+                    "marker_name": marker,
+                    "compartment": self.compartments[marker],
+                    "hexagonality": hexagonality
+                }
+                
+                masked_intensity_img = self.images[marker][lbl == region.label]
+                masked_segmentation = lbl[lbl == region.label]
+                marker_result_dict.update({
+                    "area" : region.area,
+                    "centroid_x" : region_props.centroid[0],
+                    "centroid_y" : region_props.centroid[1],
+                    "weighted_centroid_x" : region_props.weighted_centroid[0],
+                    "weighted_centroid_y" : region_props.weighted_centroid[1],
+                    "aspect_ratio" : region.major_axis_length / region.minor_axis_length if region.minor_axis_length > 0 else 0,
+                    "eccentricity" : region.eccentricity,
+                    "orientation" : region.orientation,
+                    "euler_number" : region.euler_number,
+                    "extent" : region.extent,
+                    "intensity_max" : region.intensity_max,
+                    "intensity_mean" : region.intensity_mean,
+                    "intensity_min" : region.intensity_min,
+                    "intensity_median": region.intensity_median,
+                    "intensity_std" : region.intensity_std,
+                    "perimeter" : region.perimeter,
+                    "spherical_volume": features.spherical_volume(masked_segmentation),
+                    "ellipsoid_volume_minor": features.ellipsoid_volume(masked_segmentation)[1],
+                    "ellipsoid_volume_major": features.ellipsoid_volume(masked_segmentation)[0],
+                    "segmentation_count": number_of_segmentations,
+                    "morans_i": features.morans_i(masked_intensity_img)
+                })
+
+                marker_result_dict.update(features.polat_to_fourier_series(masked_segmentation))
+
+                if "granule" in self.compartments[marker].lower():
+                    marker_result_dict.update({
+                        "touch_area_nucleus": features.touch_area(masked_segmentation, nucleus_mask),
+                        "centroid_distance_to_nucleus": features.centroid_distance_to_nucleus(masked_segmentation, nucleus_mask),
+                        "edge_distance_to_nucleus": features.edge_distance_to_nucleus(masked_segmentation, nucleus_mask)
+                    })
+
+                self.detailed_results.append(marker_result_dict)
