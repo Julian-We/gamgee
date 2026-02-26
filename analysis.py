@@ -1,10 +1,6 @@
-import sys
-from features import edge_distance_to_nucleus, spherical_volume
 import numpy as np
-sys.path.append("/Users/icb_remote/Documents/JW/py/packages/")
 import pickle
 from pathlib import Path
-from matplotlib import pyplot as plt
 import datetime
 from skimage.measure import regionprops, label
 from gamgee.instance.segmentations import delete_outside_objects, merge_segmentations
@@ -47,8 +43,9 @@ class Sample:
         self._unupickle()
         self.clean_up_segmentations()
 
-        self.per_granule_results = []
-        self.detailed_results = []
+        self.features = []
+
+        self.extract_features()
 
     def log(self, message: str):
         self.logs[datetime.datetime.now().isoformat()] = message
@@ -261,4 +258,4 @@ class Sample:
                         "edge_distance_to_nucleus": features.edge_distance_to_nucleus(masked_segmentation, nucleus_mask)
                     })
 
-                self.detailed_results.append(marker_result_dict)
+                self.features.append(marker_result_dict)

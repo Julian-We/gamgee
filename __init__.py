@@ -19,7 +19,8 @@ from .denoising_interface import denoise_with_care
 from .instance.thecell import TheCell
 from .instance.modelhandler import ModelHandler
 from .instance.marker import Marker
-from analysis import Sample
+from .analysis import Sample
+from . import features
 
 
 # Utility functions
