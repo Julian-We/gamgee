@@ -19,6 +19,7 @@ from .denoising_interface import denoise_with_care
 from .instance.thecell import TheCell
 from .instance.modelhandler import ModelHandler
 from .instance.marker import Marker
+from analysis import Sample
 
 
 # Utility functions
@@ -32,4 +33,5 @@ __all__ = [
     "catch_error",
     "upsampling",
     "get_shared_memory_info",
+    "Sample"
 ]
