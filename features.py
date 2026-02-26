@@ -5,6 +5,7 @@ from typing import Callable, Union, Any
 from skimage import measure
 from scipy.fft import fft
 from skimage.measure import regionprops
+from scipy.spatial import cKDTree
 
 def catch_error(default_value: Union[float, tuple, list] = np.nan):
     """
@@ -412,3 +413,64 @@ def granule_fourier_series(granule_label_image, n_harmonics=50):
 
         data.append(fourier_data)
     return data
+
+
+def hexagonality(label_image):
+    """Compute hexagonality of a segmentation label image.
+
+    For each centroid, the 6 nearest neighbours are found and the consecutive
+    angular gaps (which sum to 360°) are compared to the ideal 60° spacing of
+    a perfect hexagonal lattice (interior angle 120°).  The per-cell score is
+    1 − mean(|gap − 60°|) / 60°, clipped to [0, 1].  The global score is the
+    mean across all cells.
+
+    Parameters
+    ----------
+    label_image : np.ndarray
+        2-D integer label image; each unique value > 0 is one segment.
+
+    Returns
+    -------
+    float
+        Hexagonality in [0, 1].  Returns np.nan when fewer than 7 labels are
+        present (not enough for one cell with 6 neighbours).
+    """
+    label_image = np.asarray(label_image, dtype=int)
+    props = measure.regionprops(label_image)
+
+    if len(props) < 7:
+        return np.nan
+
+    centroids = np.array([p.centroid for p in props])  # (N, 2)  row, col
+
+    tree = cKDTree(centroids)
+    # query k=7: index 0 is the point itself, indices 1-6 are the 6 nearest neighbours
+    distances, indices = tree.query(centroids, k=7)
+
+    # Estimate lattice spacing as the median nearest-neighbour distance
+    nn_dist = distances[:, 1]                          # distance to closest neighbour
+    lattice_spacing = np.median(nn_dist)
+
+    scores = []
+    for i, (dists, nbrs) in enumerate(zip(distances, indices)):
+        # Skip boundary cells: require all 6 neighbours within 1.5× lattice spacing
+        if dists[6] > 1.5 * lattice_spacing:
+            continue
+
+        neighbours = centroids[nbrs[1:]]              # (6, 2)
+        dy = neighbours[:, 0] - centroids[i, 0]
+        dx = neighbours[:, 1] - centroids[i, 1]
+        angles = np.sort(np.degrees(np.arctan2(dy, dx)) % 360)  # sorted in [0, 360)
+
+        # Consecutive angular gaps including the wrap-around gap
+        gaps = np.diff(angles, append=angles[0] + 360)          # sum == 360°
+
+        mean_dev = np.mean(np.abs(gaps - 60.0))
+        scores.append(max(0.0, 1.0 - mean_dev / 60.0))
+
+    if not scores:
+        return np.nan
+
+    return float(np.mean(scores))
+
+
