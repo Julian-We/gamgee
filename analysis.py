@@ -32,6 +32,7 @@ class Sample:
         # Generate for image a 
         self.lock = False
         self.uid = None
+        self.condition = None
         self.images = {}
         self.denoised_images = {}
         self.segmentations = {}
@@ -42,6 +43,7 @@ class Sample:
         self.root_dir = Path(path) if not isinstance(path, Path) else path
         self._unupickle()
         self.clean_up_segmentations()
+        
 
         self.features = []
 
@@ -163,6 +165,7 @@ class Sample:
         with open(pickle_file_path, 'rb') as f:
             data = pickle.load(f)
             self.uid = data.pop("uid", None)
+            self.condition = data.pop("condition", None)
             if not self.uid:
                 raise ValueError(f"No unique identifier passed in pickle file <{pickle_file_path.name}>")
             for marker, makrer_dict in data.items():
@@ -189,7 +192,7 @@ class Sample:
             if self.segmentations[marker] is not None:
                 ax[i].contour(self.segmentations[marker], colors='r', linewidths=0.5)
         ax[i+1].imshow(self.images[nls_markers[0]], cmap="gray")
-        ax[i+1].set_title(f"{nls_markers[0]} - {self.compartments[nls_markers[0]]}")
+        ax[i+1].set_title(f"{self.uid} - {self.compartments[nls_markers[0]]}")
         for marker in nls_markers:
             if self.segmentations[marker] is not None:
                 ax[i+1].contour(self.segmentations[marker], colors='r', linewidths=0.5)
@@ -208,6 +211,10 @@ class Sample:
         nucleus_marker = next((mrk for mrk, cmp in self.compartments.items() if "nucleus" in cmp.lower()), None)
         nucleus_mask = self.segmentations[nucleus_marker] > 0
 
+
+        cell_marker = next((mrk for mrk, cmp in self.compartments.items() if "cell" in cmp.lower()), None)
+        cell_mask = self.segmentations[cell_marker] > 0
+
         for marker in self.markers:
             lbl = self.segmentations[marker]
             region_props = regionprops(lbl, intensity_image=self.images[marker])
@@ -215,23 +222,31 @@ class Sample:
             # Marker wide values
             number_of_segmentations = len(region_props)
             hexagonality = features.hexagonality(lbl)
+            
+            percentiles_dict = {}
+            for percentile in [80,85,90,95,99]:
+                percentiles_dict.update(features.threshold_parameters(self.images[marker], cell_mask, percentile))
 
             for region in region_props:
                 marker_result_dict = {
                     "marker_name": marker,
                     "compartment": self.compartments[marker],
+                    "condition": self.condition,
+                    "uid": self.uid,
                     "hexagonality": hexagonality
                 }
-                
-                masked_intensity_img = self.images[marker][lbl == region.label]
-                masked_segmentation = lbl[lbl == region.label]
+                marker_result_dict.update(percentiles_dict)
+                masked_intensity_img = np.where(lbl == region.label, self.images[marker], 0)
+                masked_segmentation = lbl == region.label
+                self.log(f"Extracting features for marker {marker}, region {region.label} with area {region.area} and centroid {region.centroid} in sample <{self.root_dir.name}>")
+                 
                 marker_result_dict.update({
                     "area" : region.area,
-                    "centroid_x" : region_props.centroid[0],
-                    "centroid_y" : region_props.centroid[1],
-                    "weighted_centroid_x" : region_props.weighted_centroid[0],
-                    "weighted_centroid_y" : region_props.weighted_centroid[1],
-                    "aspect_ratio" : region.major_axis_length / region.minor_axis_length if region.minor_axis_length > 0 else 0,
+                    "centroid_x" : region.centroid[0],
+                    "centroid_y" : region.centroid[1],
+                    "weighted_centroid_x" : region.centroid_weighted[0],
+                    "weighted_centroid_y" : region.centroid_weighted[1],
+                    "aspect_ratio" : region.axis_major_length / region.axis_minor_length if region.axis_minor_length > 0 else 0,
                     "eccentricity" : region.eccentricity,
                     "orientation" : region.orientation,
                     "euler_number" : region.euler_number,
@@ -249,11 +264,11 @@ class Sample:
                     "morans_i": features.morans_i(masked_intensity_img)
                 })
 
-                marker_result_dict.update(features.polat_to_fourier_series(masked_segmentation))
+                marker_result_dict.update(features.polar_to_fourier_series(masked_segmentation))
 
                 if "granule" in self.compartments[marker].lower():
                     marker_result_dict.update({
-                        "touch_area_nucleus": features.touch_area(masked_segmentation, nucleus_mask),
+                        "touch_area_nucleus": features.touch_area(masked_segmentation, nucleus_mask, number_dilations=2),
                         "centroid_distance_to_nucleus": features.centroid_distance_to_nucleus(masked_segmentation, nucleus_mask),
                         "edge_distance_to_nucleus": features.edge_distance_to_nucleus(masked_segmentation, nucleus_mask)
                     })

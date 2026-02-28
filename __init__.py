@@ -26,6 +26,7 @@ from . import features
 # Utility functions
 from .utils.utils import upsampling
 from .utils.denoising import get_shared_memory_info, encode_memmap_info, get_memmap_info
+from .utils.h5io import write_sample, read_sample, list_samples
 
 
 __all__ = [

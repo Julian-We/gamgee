@@ -118,8 +118,8 @@ def get_aspect_ratio(binary_mask):
     region = props[0]
 
     # Calculate aspect ratio
-    major_axis = region.major_axis_length
-    minor_axis = region.minor_axis_length
+    major_axis = region.axis_major_length
+    minor_axis = region.axis_minor_length
 
     if minor_axis == 0:
         return np.nan
@@ -189,8 +189,8 @@ def basic_granule_features(granule_label_image):
             "Perimeter": granule_lbl.perimeter,
             "CentroidY": granule_lbl.centroid[0],
             "CentroidX": granule_lbl.centroid[1],
-            "MajorAxisLength": granule_lbl.major_axis_length,
-            "MinorAxisLength": granule_lbl.minor_axis_length,
+            "MajorAxisLength": granule_lbl.axis_major_length,
+            "MinorAxisLength": granule_lbl.axis_minor_length,
             "Eccentricity": granule_lbl.eccentricity,
             "Orientation": granule_lbl.orientation,
             "GranuleNumberPerCell": granule_number,
@@ -435,4 +435,22 @@ def hexagonality(label_image):
 
     return float(np.mean(scores))
 
+
+def threshold_parameters(image_of_interest, confining_segmentation, percentile):
+
+    try:
+        binary_image = image_of_interest > np.percentile(image_of_interest[confining_segmentation > 0], percentile)
+        binary_image = ndimage.binary_opening(binary_image)
+
+        return {
+                f"percentile{percentile}_area": np.sum(binary_image),
+                f"percentile{percentile}_mean_intensity": np.mean(image_of_interest[binary_image]),
+                f"percentile{percentile}_sum_intensity": np.min(image_of_interest[binary_image]),
+                }
+    except Exception as e:
+        return {
+                f"percentile{percentile}_area": np.nan,
+                f"percentile{percentile}_mean_intensity": np.nan,
+                f"percentile{percentile}_sum_intensity": np.nan,
+                }
 

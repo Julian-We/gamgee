@@ -21,7 +21,7 @@ def load_instance(instance_path: str):
 
 class TheCell:
     def __init__(self, root_path: str|Path, model_handler: ModelHandler,
-                 name=None, blacklist=None, refine_segmentations=True, uid=None, **kwargs):
+                 name=None, blacklist=None, refine_segmentations=True, uid=None, condition=None, **kwargs):
         """Initialize a cell instance.
         Args:
             name (str): Name of the cell.
@@ -36,6 +36,7 @@ class TheCell:
         self.output_root.mkdir(exist_ok=True, parents=True)
         self.name = name if name is not None else self.root.name
         self.cell_id = uuid.uuid4().hex if uid is None else uid
+        self.condition = condition
         self.all_features = {}
 
         # Default blacklist for common non-marker folders
@@ -99,7 +100,7 @@ class TheCell:
                     self.logs[f"Marker_{marker_name}"] = "Created successfully"
                     if "nls" in marker_name.lower():
                         print(image_file)
-                        marker_name = f"{marker_name}_cell"
+                        marker_name = marker_name.replace("nucleus", "cell")
                         marker = Marker(
                             image_path=image_file,
                             parent_name=self.name,
@@ -265,6 +266,7 @@ class TheCell:
         """Per Marker save raw, denoised and segmentation images, in one pickle file per TheCell"""
         images_data = {}
         images_data["uid"] = self.cell_id
+        images_data["condition"] = self.condition
         for marker_name, marker in self.markers.items():
             images_data[marker_name] = {
                 "raw_image": marker.raw_image,
