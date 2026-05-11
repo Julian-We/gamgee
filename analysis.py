@@ -261,7 +261,8 @@ class Sample:
                     "ellipsoid_volume_minor": features.ellipsoid_volume(masked_segmentation)[1],
                     "ellipsoid_volume_major": features.ellipsoid_volume(masked_segmentation)[0],
                     "segmentation_count": number_of_segmentations,
-                    "morans_i": features.morans_i(masked_intensity_img)
+                    "morans_i": features.morans_i(masked_intensity_img),
+                    "nucleus_iou": features.iou(masked_segmentation, nucleus_mask),
                 })
 
                 marker_result_dict.update(features.polar_to_fourier_series(masked_segmentation))

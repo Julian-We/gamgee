@@ -85,6 +85,22 @@ def touch_area(mask1, mask2, number_dilations):
     dilated_mask2 = ndimage.binary_dilation(mask2, iterations=number_dilations)
     return np.sum(np.logical_and(dilated_mask1, dilated_mask2))
 
+
+def iou(mask1, mask2):
+    """
+    Calculate the Intersection over Union (IoU) of two binary masks.
+    Args:
+        mask1: First binary mask (2D array)
+        mask2: Second binary mask (2D array)
+    Returns:
+        float: IoU value between 0 and 1
+    """
+    intersection = np.logical_and(mask1, mask2).sum()
+    union = np.logical_or(mask1, mask2).sum()
+    if union == 0:
+        return 0.0
+    return intersection / union
+
 def spherical_volume(mask):
     """
     Calculate the volume of a sphere given its surface area.
