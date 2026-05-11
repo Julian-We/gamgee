@@ -1,17 +1,27 @@
 import os
 import re
 from pathlib import Path
-from micro_sam.automatic_segmentation import get_predictor_and_segmenter, automatic_instance_segmentation
-from .utils.utils import upsampling
+from micro_sam.automatic_segmentation import (
+    get_predictor_and_segmenter,
+    automatic_instance_segmentation,
+)
+from .utils.utils import upsampling, normalize
 from skimage.transform import resize
 from skimage import restoration
 import numpy as np
 import matplotlib.pyplot as plt
 
 
-
 class SegmentationModel:
-    def __init__(self, path, model_type="vit_b_lm", upsampling_factor=None, friendly_name=None, cell_compartment=None, **kwargs):
+    def __init__(
+        self,
+        path,
+        model_type="vit_b_lm",
+        upsampling_factor=None,
+        friendly_name=None,
+        cell_compartment=None,
+        **kwargs,
+    ):
         # Convert path to Path object if it's not None
         if path is not None:
             path = Path(path)
@@ -20,11 +30,11 @@ class SegmentationModel:
 
         if path is not None and path.exists():
             self.checkpoints_root = path
-            if path.name.lower() == 'checkpoints':
+            if path.name.lower() == "checkpoints":
                 self.checkpoints_root = path.parent
 
             # Define basic directories to search for checkpoints
-            search_dirs = [self.checkpoints_root, self.checkpoints_root / 'checkpoints']
+            search_dirs = [self.checkpoints_root, self.checkpoints_root / "checkpoints"]
 
             # Append additional directories (subdirectories of checkpoints_root)
             for subdir in self.checkpoints_root.iterdir():
@@ -33,21 +43,23 @@ class SegmentationModel:
 
             # Search for 'best.pt' in the defined directories
             for directory in search_dirs:
-                candidate = directory / 'best.pt'
+                candidate = directory / "best.pt"
                 if candidate.exists():
                     self.checkpoints = candidate
                     break
         else:
             self.checkpoints_root = None
             self.checkpoints = None
-        self.checkpoints_name = self.checkpoints_root.name if self.checkpoints_root else model_type
+        self.checkpoints_name = (
+            self.checkpoints_root.name if self.checkpoints_root else model_type
+        )
         self.model_type = model_type
         if upsampling_factor is None:
             # Find the upsampling factor from the checkpoint name "up5" in a checkoints.split('_')
             s = self.checkpoints_name
-            if kwargs.get('verbose', False):
+            if kwargs.get("verbose", False):
                 print(s)
-            match = re.search(r'up(\d+)', s)
+            match = re.search(r"up(\d+)", s)
             if match:
                 self.upsampling_factor = int(match.group(1))
             else:
@@ -56,15 +68,14 @@ class SegmentationModel:
             self.upsampling_factor = upsampling_factor
         self.model_type = model_type
         if path is None:
-            if kwargs.get('verbose', False):
+            if kwargs.get("verbose", False):
                 print("No checkpoint path provided, using default model.")
             self.predictor, self.segmenter = get_predictor_and_segmenter(
                 model_type=self.model_type
             )
         else:
             self.predictor, self.segmenter = get_predictor_and_segmenter(
-                checkpoint=str(self.checkpoints),
-                model_type=self.model_type
+                checkpoint=str(self.checkpoints), model_type=self.model_type
             )
 
         self.friendly_name = friendly_name if friendly_name else self.checkpoints_name
@@ -80,33 +91,37 @@ class SegmentationModel:
 
         # Memory requirements per model family (conservative estimates in bytes)
         _MODEL_MEMORY = {
-            'vit_b': 1.5 * 1024 ** 3,
-            'vit_l': 3.5 * 1024 ** 3,
-            'vit_h': 6.0 * 1024 ** 3,
+            "vit_b": 1.5 * 1024**3,
+            "vit_l": 3.5 * 1024**3,
+            "vit_h": 6.0 * 1024**3,
         }
         required = next(
             (v for k, v in _MODEL_MEMORY.items() if self.model_type.startswith(k)),
-            3.5 * 1024 ** 3,  # default to ViT-L if model type is unknown
+            3.5 * 1024**3,  # default to ViT-L if model type is unknown
         )
 
         # Add memory for the (potentially upsampled) image tensor (float32, 3 channels)
         h, w = image_shape[:2]
         required += (h * self.upsampling_factor) * (w * self.upsampling_factor) * 3 * 4
 
-        device = getattr(self.predictor, 'device', torch.device('cpu'))
-        device_type = str(device).split(':')[0]
+        device = getattr(self.predictor, "device", torch.device("cpu"))
+        device_type = str(device).split(":")[0]
 
-        if device_type == 'cuda':
+        if device_type == "cuda":
             free, _ = torch.cuda.mem_get_info(device)
             available = free
-            device_label = f'CUDA ({torch.cuda.get_device_name(device)})'
-        elif device_type == 'mps':
+            device_label = f"CUDA ({torch.cuda.get_device_name(device)})"
+        elif device_type == "mps":
             try:
                 import psutil
-                available = psutil.virtual_memory().available - torch.mps.current_allocated_memory()
+
+                available = (
+                    psutil.virtual_memory().available
+                    - torch.mps.current_allocated_memory()
+                )
             except ImportError:
                 return  # Cannot determine available memory without psutil; skip check
-            device_label = 'Metal (MPS)'
+            device_label = "Metal (MPS)"
         else:
             return  # CPU has no hard VRAM limit
 
@@ -114,8 +129,8 @@ class SegmentationModel:
             raise MemoryError(
                 f"Insufficient {device_label} memory to compute embeddings for "
                 f"model '{self.friendly_name}'. "
-                f"Available: {available / 1024 ** 3:.2f} GB, "
-                f"estimated required: {required / 1024 ** 3:.2f} GB. "
+                f"Available: {available / 1024**3:.2f} GB, "
+                f"estimated required: {required / 1024**3:.2f} GB. "
                 f"Try closing other applications or reducing the image size."
             )
 
@@ -135,7 +150,7 @@ class SegmentationModel:
                 predictor=self.predictor,
                 segmenter=self.segmenter,
                 input_path=image,
-                foreground_smoothing=foreground_smoothing
+                foreground_smoothing=foreground_smoothing,
             )
         elif self.upsampling_factor > 1:
             # Upsample the image, perform segmentation and downsample the result
@@ -143,7 +158,7 @@ class SegmentationModel:
                 predictor=self.predictor,
                 segmenter=self.segmenter,
                 input_path=upsampling(image, self.upsampling_factor),
-                foreground_smoothing=foreground_smoothing
+                foreground_smoothing=foreground_smoothing,
             )
 
             return resize(
@@ -151,10 +166,12 @@ class SegmentationModel:
                 output_shape=image.shape,
                 order=0,  # Nearest neighbor interpolation
                 preserve_range=True,
-                anti_aliasing=False
+                anti_aliasing=False,
             ).astype(segmentation.dtype)
         else:
-            raise ValueError(f"{self.upsampling_factor} is not a valid upsampling factor.")
+            raise ValueError(
+                f"{self.upsampling_factor} is not a valid upsampling factor."
+            )
 
     def get_model_info(self):
         """
@@ -163,28 +180,34 @@ class SegmentationModel:
         :return: Dictionary containing model information.
         """
         return {
-            "checkpoints_root": str(self.checkpoints_root) if self.checkpoints_root else None,
+            "checkpoints_root": str(self.checkpoints_root)
+            if self.checkpoints_root
+            else None,
             "checkpoints": str(self.checkpoints) if self.checkpoints else None,
             "checkpoints_name": self.checkpoints_name,
             "friendly_name": self.friendly_name,
             "model_type": self.model_type,
-            "upsampling_factor": self.upsampling_factor
+            "upsampling_factor": self.upsampling_factor,
         }
 
 
 class SegmentationInstance:
-    def __init__(self, image, segmentation_model: SegmentationModel,
-                 instant_prediction=True,
-                 use_background_substration=False,
-                 rolling_ball_radius=60):
-        """ Initialize the SegmentationInstance with an image and a segmentation model.
+    def __init__(
+        self,
+        image,
+        segmentation_model: SegmentationModel,
+        instant_prediction=True,
+        use_background_substration=False,
+        rolling_ball_radius=60,
+    ):
+        """Initialize the SegmentationInstance with an image and a segmentation model.
         :param image: Input image as a 2D numpy array.
         :param segmentation_model: An instance of SegmentationModel.
         :param instant_prediction: If True, perform segmentation immediately.
         :param use_background_substration: If True, apply background subtraction using a rolling ball algorithm.
         """
 
-        self.image = image
+        self.image = normalize(image)
         if image.ndim != 2:
             raise ValueError("Image must be a 2D array.")
 
@@ -195,7 +218,9 @@ class SegmentationInstance:
             self.image_filtered = image
 
         if instant_prediction:
-            self.segmentation = segmentation_model.segment(self.image_filtered, foreground_smoothing=2.0)
+            self.segmentation = segmentation_model.segment(
+                self.image_filtered, foreground_smoothing=2.0
+            )
             if self.segmentation is None:
                 raise ValueError("Segmentation failed, returned None.")
         else:
@@ -203,7 +228,9 @@ class SegmentationInstance:
 
         self.segmentation_model_info = segmentation_model.get_model_info()
 
-    def get_segmentation_comparison(self, segmentation_model_dict, fig_scaling=5.0, export_path=None):
+    def get_segmentation_comparison(
+        self, segmentation_model_dict, fig_scaling=5.0, export_path=None
+    ):
         """
         Compare the segmentation with other models.
 
@@ -214,21 +241,30 @@ class SegmentationInstance:
         """
         comparison_results = {}
         for model_name, model in segmentation_model_dict.items():
-            comparison_results[model_name] = model.segment(self.image, foreground_smoothing=2.0)
+            comparison_results[model_name] = model.segment(
+                self.image, foreground_smoothing=2.0
+            )
 
-        fig, axs = plt.subplots(1, len(comparison_results) + 1,
-                                figsize=(fig_scaling * len(comparison_results), len(comparison_results)))
-        axs[0].imshow(self.image, cmap='gray')
-        axs[0].set_title('Original Image')
-        for i, (model_name, segmentation) in enumerate(comparison_results.items(), start=1):
-            axs[i].imshow(segmentation, cmap='nipy_spectral')
+        fig, axs = plt.subplots(
+            1,
+            len(comparison_results) + 1,
+            figsize=(fig_scaling * len(comparison_results), len(comparison_results)),
+        )
+        axs[0].imshow(self.image, cmap="gray")
+        axs[0].set_title("Original Image")
+        for i, (model_name, segmentation) in enumerate(
+            comparison_results.items(), start=1
+        ):
+            axs[i].imshow(segmentation, cmap="nipy_spectral")
             axs[i].set_title(model_name)
         for ax in axs:
-            ax.axis('off')
+            ax.axis("off")
         # plt.tight_layout()
         if export_path:
             export_path = Path(export_path)
-            plt.savefig(export_path / f'{hex(np.random.randint(0, 10000))}.png', dpi=300)
+            plt.savefig(
+                export_path / f"{hex(np.random.randint(0, 10000))}.png", dpi=300
+            )
             plt.close(fig)
 
         self.segmentation = comparison_results
@@ -241,7 +277,9 @@ class SegmentationInstance:
         :param foreground_smoothing: Smoothing factor for the foreground.
         :return: Segmentation mask.
         """
-        self.segmentation = segmentation_model.segment(self.image_filtered, foreground_smoothing=foreground_smoothing)
+        self.segmentation = segmentation_model.segment(
+            self.image_filtered, foreground_smoothing=foreground_smoothing
+        )
         if self.segmentation_model_info != segmentation_model.get_model_info():
             self.segmentation_model_info = segmentation_model.get_model_info()
         return self.segmentation
