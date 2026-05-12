@@ -13,3 +13,5 @@ __pycache__/
 *.ipr
 .idea_modules/
 out/
+/main.py
+/.python-version

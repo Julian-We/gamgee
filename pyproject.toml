@@ -1,0 +1,11 @@
+[project]
+name = "gamgee"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = "3.12"
+dependencies = [
+  "micro_sam @ git+https://github.com/computational-cell-analytics/micro-sam.git@v1.6.2",
+  "tifffile=2026.2.20"
+
+]
