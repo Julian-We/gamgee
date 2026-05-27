@@ -37,16 +37,17 @@ class SegmentationModel:
             search_dirs = [self.checkpoints_root, self.checkpoints_root / "checkpoints"]
 
             # Append additional directories (subdirectories of checkpoints_root)
-            for subdir in self.checkpoints_root.iterdir():
-                if subdir.is_dir():
-                    search_dirs.append(subdir)
+            if self.checkpoints_root.is_dir():
+                for subdir in self.checkpoints_root.iterdir():
+                    if subdir.is_dir():
+                        search_dirs.append(subdir)
 
-            # Search for 'best.pt' in the defined directories
-            for directory in search_dirs:
-                candidate = directory / "best.pt"
-                if candidate.exists():
-                    self.checkpoints = candidate
-                    break
+                # Search for 'best.pt' in the defined directories
+                for directory in search_dirs:
+                    candidate = directory / "best.pt"
+                    if candidate.exists():
+                        self.checkpoints = candidate
+                        break
         else:
             self.checkpoints_root = None
             self.checkpoints = None

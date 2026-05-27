@@ -28,6 +28,7 @@ class TheCell:
         name=None,
         blacklist=None,
         refine_segmentations=True,
+        denoise_blocker=False,
         uid=None,
         condition=None,
         **kwargs,
@@ -45,7 +46,8 @@ class TheCell:
         self.output_root = self.root / "output"
         self.output_root.mkdir(exist_ok=True, parents=True)
         self.name = name if name is not None else self.root.name
-        self.cell_id = uuid.uuid4().hex if uid is None else uid
+        self.uid = uuid.uuid4().hex[:8] if uid is None else uid
+        self.denoise_blocker = denoise_blocker
         self.condition = condition
         self.all_features = {}
 
@@ -73,7 +75,7 @@ class TheCell:
 
         self.logs = {
             "Name": self.name,
-            "Cell ID": self.cell_id,
+            "Cell ID": self.uid,
         }
 
         self.markers = {}
@@ -84,9 +86,15 @@ class TheCell:
         # Scan for marker folders and create Marker objects
         self._scan_and_create_markers()
         # print(f"Found {len(self.markers)} markers for cell '{self.name}'.")
-        self.denoise()
+        if not denoise_blocker:
+            self.denoise()
+        else:
+            for marker in self.markers.values():
+                marker.denoised_image = marker.raw_image
+
         # if refine_segmentations:
         #     self.refine_segmentations()
+
         self.plot_markers_and_segmentations()
 
         self.save_segmentations()
@@ -130,7 +138,7 @@ class TheCell:
                     marker = Marker(
                         image_path=image_file,
                         parent_name=self.name,
-                        parent_id=self.cell_id,
+                        parent_id=self.uid,
                         model_handler=self.model_handler,
                     )
                     self.markers[marker_name] = marker
@@ -141,7 +149,7 @@ class TheCell:
                         marker = Marker(
                             image_path=image_file,
                             parent_name=self.name,
-                            parent_id=self.cell_id,
+                            parent_id=self.uid,
                             model_handler=self.model_handler,
                             compartment="cell",
                         )
@@ -172,7 +180,7 @@ class TheCell:
                             marker = Marker(
                                 name=marker_name,
                                 parent_name=self.name,
-                                parent_id=self.cell_id,
+                                parent_id=self.uid,
                                 parent_root=self.image_root,
                                 model_handler=self.model_handler,
                             )
@@ -320,7 +328,7 @@ class TheCell:
 
     def save_instance(self):
         """Save the entire TheCell instance to a pickle file."""
-        instance_path = self.output_root / f"{self.cell_id}_TheCell_instance.pkl"
+        instance_path = self.output_root / f"{self.uid}_TheCell_instance.pkl"
         with open(instance_path, "wb") as f:
             pickle.dump(self, f)
         print(f"TheCell instance saved to {instance_path}")
@@ -328,7 +336,7 @@ class TheCell:
     def pickle_images(self):
         """Per Marker save raw, denoised and segmentation images, in one pickle file per TheCell"""
         images_data = {}
-        images_data["uid"] = self.cell_id
+        images_data["uid"] = self.uid
         images_data["condition"] = self.condition
         for marker_name, marker in self.markers.items():
             images_data[marker_name] = {
@@ -337,7 +345,7 @@ class TheCell:
                 "segmentation": marker.segmentation,
                 "compartment": marker.compartment,
             }
-        images_path = self.output_root / f"{self.cell_id}_TheCell_images.pkl"
+        images_path = self.output_root / f"{self.uid}_TheCell_images.pkl"
         with open(images_path, "wb") as f:
             pickle.dump(images_data, f)
         print(f"Marker images saved to {images_path}")

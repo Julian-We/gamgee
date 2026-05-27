@@ -11,49 +11,62 @@ from .modelhandler import ModelHandler
 from gamgee.utils.utils import normalize
 import gamgee.features as features_module
 
+
 class Marker:
-    def __init__(self, image_path:Path|str, parent_name: str, parent_id: str, model_handler=None,
-                 **kwargs):
+    def __init__(
+        self,
+        image_path: Path | str,
+        parent_name: str,
+        parent_id: str,
+        model_handler=None,
+        **kwargs,
+    ):
         """Initialize a marker instance.
         Args:
             name (str): Name of the marker.
         """
 
         # Define IO attributes
-        self.image_path = image_path if image_path is not None and isinstance(image_path, Path) else Path(image_path)
-        self.image_root = self.image_path.parent if self.image_path is not None else None
+        self.image_path = (
+            image_path
+            if image_path is not None and isinstance(image_path, Path)
+            else Path(image_path)
+        )
+        self.image_root = (
+            self.image_path.parent if self.image_path is not None else None
+        )
         self.name = self.image_path.stem if self.image_path is not None else None
 
         self.parent_name = parent_name
         self.parent_id = parent_id
         # self.parent_root = parent_root if parent_root is not isinstance(parent_root, Path) else Path(parent_root)
         # self.name = name
-        self.uid = uuid.uuid4().hex[:10]
+        self.uid = uuid.uuid4().hex[:8]
 
         self.logs = {
             "Name": self.name,
             "Parent Name": self.parent_name,
             "Parent ID": self.parent_id,
-            "Preprocessing": []
+            "Preprocessing": [],
         }
         # Define metadata attributes
-        if not kwargs.get('compartment', False):
-            self.compartment = self.set_compartment()
+        if not kwargs.get("compartment", False):
+            self.compartment: str = self.set_compartment()
         else:
-            self.compartment = kwargs.get('compartment')
+            self.compartment: str = kwargs.get("compartment", "granules")
         self.sam_model = None
         if model_handler is None:
             model_handler = ModelHandler()
         self.set_sam_model(model_handler)
         # Define model attributes
-        self.denoising_model_name = kwargs.get('denoising_model_name', None)
+        self.denoising_model_name = kwargs.get("denoising_model_name", None)
         if self.denoising_model_name is None:
-            if self.compartment == 'granules':
-                self.denoising_model_name = '20250812_JW_granule_25'
-            elif self.compartment == 'cell':
-                self.denoising_model_name = '250721_PGC_nls_JS_noise25'
-            elif self.compartment == 'nucleus':
-                self.denoising_model_name = '250721_PGC_nls_JS_noise25'
+            if "granule" in self.compartment.lower():
+                self.denoising_model_name = "20250812_JW_granule_25"
+            elif self.compartment == "cell":
+                self.denoising_model_name = "250721_PGC_nls_JS_noise25"
+            elif self.compartment == "nucleus":
+                self.denoising_model_name = "250721_PGC_nls_JS_noise25"
             else:
                 self.denoising_model_name = None
         self.logs["Denoising Model"] = self.denoising_model_name
@@ -67,38 +80,69 @@ class Marker:
         # Generate freatue dictionary. Keys should be feature names, values the corresponding values or a list of values
         self.features = None
 
-
-
     def set_compartment(self):
-        granule_compartment_keywords = ['granule', 'granules',
-                                        'dnd', 'gra', 'ddx', 'nos', 'piwi', 'tdrd', 'tdrda',
-                                        'dead end', 'nanos', 'vasa', 'granulito', 'hyper', 'hypergerm']
-        cell_compartment_keywords = ['cell', 'membrane', 'membranes', 'cyto', 'cytoplasm', 'cytoplasmatic']
-        nucleus_compartment_keywords = ['nucleus', 'nuclei', 'nls', 'nuclear', 'nucleic', 'dna', 'chromatin', 'dapi']
-        if re.sub(r'\d+', '', self.name).lower() in granule_compartment_keywords:
-            self.logs["Compartment"] = 'granules'
-            return 'granules'
-        elif re.sub(r'\d+', '', self.name).lower() in cell_compartment_keywords:
-            self.logs["Compartment"] = 'cell'
-            return 'cell'
-        elif re.sub(r'\d+', '', self.name).lower() in nucleus_compartment_keywords:
-            self.logs["Compartment"] = 'nucleus'
-            return 'nucleus'
+        granule_compartment_keywords = [
+            "granule",
+            "granules",
+            "dnd",
+            "gra",
+            "ddx",
+            "nos",
+            "piwi",
+            "tdrd",
+            "tdrda",
+            "dead end",
+            "nanos",
+            "vasa",
+            "granulito",
+            "hyper",
+            "hypergerm",
+        ]
+        cell_compartment_keywords = [
+            "cell",
+            "membrane",
+            "membranes",
+            "cyto",
+            "cytoplasm",
+            "cytoplasmatic",
+        ]
+        nucleus_compartment_keywords = [
+            "nucleus",
+            "nuclei",
+            "nls",
+            "nuclear",
+            "nucleic",
+            "dna",
+            "chromatin",
+            "dapi",
+        ]
+        if re.sub(r"\d+", "", self.name).lower() in granule_compartment_keywords:
+            self.logs["Compartment"] = "granules"
+            return "granules"
+        elif re.sub(r"\d+", "", self.name).lower() in cell_compartment_keywords:
+            self.logs["Compartment"] = "cell"
+            return "cell"
+        elif re.sub(r"\d+", "", self.name).lower() in nucleus_compartment_keywords:
+            self.logs["Compartment"] = "nucleus"
+            return "nucleus"
         else:
-            return 'unknown'
-
+            return "unknown"
 
     def set_sam_model(self, model_handler: ModelHandler):
-        if self.compartment == 'granules':
+        if self.compartment == "granules":
             self.sam_model = model_handler.granules
-        elif self.compartment.lower() == 'cell':
-            if 'membrane' in self.name.lower():
+        elif self.compartment.lower() == "cell":
+            if "membrane" in self.name.lower():
                 self.sam_model = model_handler.cell_membrane
-            elif 'cyto' in self.name.lower() or 'cell' in self.name.lower() or 'nls' in self.name.lower():
+            elif (
+                "cyto" in self.name.lower()
+                or "cell" in self.name.lower()
+                or "nls" in self.name.lower()
+            ):
                 self.sam_model = model_handler.cell_nls
             else:
                 self.sam_model = model_handler.large
-        elif self.compartment == 'nucleus':
+        elif self.compartment == "nucleus":
             self.sam_model = model_handler.nucleus_nls
         else:
             self.sam_model = model_handler.large
@@ -109,7 +153,7 @@ class Marker:
         self.raw_image = normalize(imread(self.image_path))
         self.logs["Image File"] = str(self.image_path)
         self.logs["Image Shape"] = self.raw_image.shape
-        return 'Image loaded successfully.'
+        return "Image loaded successfully."
 
     def preprocess(self, **kwargs):
         """Preprocess the raw image.
@@ -122,7 +166,9 @@ class Marker:
             img = self.raw_image.copy()
 
         if img.ndim != 2:
-            self.logs["Preprocessing"].append(f"Image is not 2D (shape:{img.shape})– performing MIP.")
+            self.logs["Preprocessing"].append(
+                f"Image is not 2D (shape:{img.shape})– performing MIP."
+            )
             self.raw_image = np.max(img, axis=0)
 
     def get_adaptive_denoising_params(self):
@@ -140,32 +186,36 @@ class Marker:
         # Adaptive weight calculation (much lower = less blurry)
         # Reduced base weight for minimal denoising
         base_weight = 0.005  # Reduced from 0.05 for less aggressive denoising
-        weight = base_weight * (noise_std / dynamic_range) * 500  # Reduced multiplier from 1000
+        weight = (
+            base_weight * (noise_std / dynamic_range) * 500
+        )  # Reduced multiplier from 1000
         weight = np.clip(weight, 0.005, 0.08)  # Lower range to preserve detail
 
         # Fewer iterations for less aggressive denoising
-        iterations = max(25, min(100, int(50 * (noise_std / dynamic_range) * 5)))  # Reduced iterations
+        iterations = max(
+            25, min(100, int(50 * (noise_std / dynamic_range) * 5))
+        )  # Reduced iterations
 
         return weight, iterations
 
     def tv_denoising(self):
         if self.denoising_model_name is None:
-            self.logs["Preprocessing"].append("No denoising model specified. Using adaptive TV chambolle denoising.")
+            self.logs["Preprocessing"].append(
+                "No denoising model specified. Using adaptive TV chambolle denoising."
+            )
 
             # Get adaptive parameters for mild denoising
             weight, iterations = self.get_adaptive_denoising_params()
 
             self.denoised_image = restoration.denoise_tv_chambolle(
-                self.raw_image,
-                weight=weight,
-                max_num_iter=5
+                self.raw_image, weight=weight, max_num_iter=5
             )
 
             self.logs["Denoising Parameters"] = {
-                "weight": weight, "iterations": iterations, "method": "adaptive_tv_chambolle"
+                "weight": weight,
+                "iterations": iterations,
+                "method": "adaptive_tv_chambolle",
             }
-
-
 
     @property
     def denoised_image(self):
@@ -193,12 +243,12 @@ class Marker:
         # Get the model name to find the appropriate lock
         model_name = None
         for name, model in self.sam_model.__dict__.items():
-            if hasattr(model, 'model_type'):
+            if hasattr(model, "model_type"):
                 model_name = name
                 break
 
         # Use the model lock to ensure thread-safe segmentation
-        if hasattr(self.sam_model, '_model_locks'):
+        if hasattr(self.sam_model, "_model_locks"):
             lock = self.sam_model._model_locks.get(model_name, threading.Lock())
         else:
             # Fallback if model handler doesn't have locks
@@ -207,14 +257,14 @@ class Marker:
         with lock:
             self.segmentation = self.sam_model.segment(self.denoised_image)
 
-        self.segmentation = self.sam_model.segment(self.denoised_image)
+        # self.segmentation = self.sam_model.segment(self.denoised_image)
         if self.compartment.lower() == "cell":
             self.logs["Segmentation Compartment"] = self.compartment
             # If there is more than one cell, keep only the one that is closest to the center
             if np.max(self.segmentation) > 1:
                 regions = measure.regionprops(self.segmentation)
                 image_center = np.array(self.denoised_image.shape) / 2
-                min_distance = float('inf')
+                min_distance = float("inf")
                 selected_label = 0
                 for region in regions:
                     centroid = np.array(region.centroid)
@@ -222,8 +272,12 @@ class Marker:
                     if distance < min_distance:
                         min_distance = distance
                         selected_label = region.label
-                self.segmentation = (self.segmentation == selected_label).astype(np.int32)
-                self.logs["Segmentation Note"] = f"Multiple cells detected. Kept only the cell closest to the center (label {selected_label})."
+                self.segmentation = (self.segmentation == selected_label).astype(
+                    np.int32
+                )
+                self.logs["Segmentation Note"] = (
+                    f"Multiple cells detected. Kept only the cell closest to the center (label {selected_label})."
+                )
         self.logs["Segmentation Info"] = self.sam_model.get_model_info()
         self.logs["Segmentation Shape"] = self.segmentation.shape
 
@@ -235,6 +289,11 @@ class Marker:
         return {
             "Marker Name": self.name,
             "Compartment": self.compartment,
-            "BasicMorphology": features_module.basic_granule_features(self.segmentation),
-            "IntensityFeatures": features_module.intensity_granule_features(self.raw_image, self.segmentation)
+            "BasicMorphology": features_module.basic_granule_features(
+                self.segmentation
+            ),
+            "IntensityFeatures": features_module.intensity_granule_features(
+                self.raw_image, self.segmentation
+            ),
         }
+
