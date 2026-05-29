@@ -48,6 +48,9 @@ class SegmentationModel:
                     if candidate.exists():
                         self.checkpoints = candidate
                         break
+            else:
+                self.checkpoints_root = path.parent
+                self.checkpoints = path
         else:
             self.checkpoints_root = None
             self.checkpoints = None
@@ -152,6 +155,7 @@ class SegmentationModel:
                 segmenter=self.segmenter,
                 input_path=image,
                 foreground_smoothing=foreground_smoothing,
+                verbose=False,
             )
         elif self.upsampling_factor > 1:
             # Upsample the image, perform segmentation and downsample the result
@@ -160,6 +164,7 @@ class SegmentationModel:
                 segmenter=self.segmenter,
                 input_path=upsampling(image, self.upsampling_factor),
                 foreground_smoothing=foreground_smoothing,
+                verbose=False,
             )
 
             return resize(
