@@ -232,7 +232,7 @@ class Marker:
                 print(f"Error during automatic segmentation: {e}")
                 self.logs["Auto-segmentation Error"] = str(e)
 
-    def segment(self, tv_denoise_if_needed=True):
+    def segment(self, tv_denoise_if_needed=True, auto_features=False):
         if self.denoised_image is None and tv_denoise_if_needed:
             self.tv_denoising()
         if self.denoised_image is None:
@@ -281,7 +281,7 @@ class Marker:
         self.logs["Segmentation Info"] = self.sam_model.get_model_info()
         self.logs["Segmentation Shape"] = self.segmentation.shape
 
-        self.features = self.get_features()
+        self.features = {} if not auto_features else self.get_features()
 
     def get_features(self, **kwargs):
         if self.segmentation is None:
@@ -296,4 +296,3 @@ class Marker:
                 self.raw_image, self.segmentation
             ),
         }
-

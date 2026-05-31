@@ -28,7 +28,7 @@ class TheCell:
         name=None,
         blacklist=None,
         refine_segmentations=True,
-        denoise_blocker=False,
+        denoise_blocker=True,
         uid=None,
         condition=None,
         **kwargs,
@@ -178,6 +178,7 @@ class TheCell:
                         try:
                             marker_name = folder.name
                             marker = Marker(
+                                image_path=image_files[0],
                                 name=marker_name,
                                 parent_name=self.name,
                                 parent_id=self.uid,
