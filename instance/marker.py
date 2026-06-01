@@ -1,3 +1,4 @@
+import datetime
 import re
 import threading
 import uuid
@@ -43,12 +44,18 @@ class Marker:
         # self.name = name
         self.uid = uuid.uuid4().hex[:8]
 
-        self.logs = {
-            "Name": self.name,
-            "Parent Name": self.parent_name,
-            "Parent ID": self.parent_id,
-            "Preprocessing": [],
-        }
+        parent_path = kwargs.get("parent_path", kwargs.get("parent_root", None))
+        if parent_path is None:
+            self.parent_path = self.image_root
+        else:
+            self.parent_path = (
+                parent_path if isinstance(parent_path, Path) else Path(parent_path)
+            )
+
+        self.logs = {}
+        self.log(f"Name: {self.name}")
+        self.log(f"Parent Name: {self.parent_name}")
+        self.log(f"Parent ID: {self.parent_id}")
         # Define metadata attributes
         if not kwargs.get("compartment", False):
             self.compartment: str = self.set_compartment()
@@ -69,7 +76,7 @@ class Marker:
                 self.denoising_model_name = "250721_PGC_nls_JS_noise25"
             else:
                 self.denoising_model_name = None
-        self.logs["Denoising Model"] = self.denoising_model_name
+            self.log(f"Denoising Model: {self.denoising_model_name}")
         # Define data attributes
         self.raw_image = None
         self._denoised_image = None  # Private attribute to store the actual value
@@ -117,13 +124,13 @@ class Marker:
             "dapi",
         ]
         if re.sub(r"\d+", "", self.name).lower() in granule_compartment_keywords:
-            self.logs["Compartment"] = "granules"
+            self.log("Compartment: granules")
             return "granules"
         elif re.sub(r"\d+", "", self.name).lower() in cell_compartment_keywords:
-            self.logs["Compartment"] = "cell"
+            self.log("Compartment: cell")
             return "cell"
         elif re.sub(r"\d+", "", self.name).lower() in nucleus_compartment_keywords:
-            self.logs["Compartment"] = "nucleus"
+            self.log("Compartment: nucleus")
             return "nucleus"
         else:
             return "unknown"
@@ -146,13 +153,29 @@ class Marker:
             self.sam_model = model_handler.nucleus_nls
         else:
             self.sam_model = model_handler.large
-        self.logs["SAM Model"] = self.sam_model.friendly_name
+        self.log(f"SAM Model: {self.sam_model.friendly_name}")
+
+    def print_logs(self):
+        for timestamp, message in self.logs.items():
+            print(f"{timestamp}: \t {message}")
+
+    def log(self, message: str):
+        self.logs[datetime.datetime.now().isoformat()] = str(message)
+
+    def logs_to_disk(self):
+        if self.parent_path is None:
+            raise ValueError("Parent path is not set for this marker.")
+        self.parent_path.mkdir(parents=True, exist_ok=True)
+        log_path = self.parent_path / "logs.txt"
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            for timestamp, message in self.logs.items():
+                log_file.write(f"{timestamp}\t{message}\n")
 
     def identify_image(self):
 
         self.raw_image = normalize(imread(self.image_path))
-        self.logs["Image File"] = str(self.image_path)
-        self.logs["Image Shape"] = self.raw_image.shape
+        self.log(f"Image File: {self.image_path}")
+        self.log(f"Image Shape: {self.raw_image.shape}")
         return "Image loaded successfully."
 
     def preprocess(self, **kwargs):
@@ -166,8 +189,8 @@ class Marker:
             img = self.raw_image.copy()
 
         if img.ndim != 2:
-            self.logs["Preprocessing"].append(
-                f"Image is not 2D (shape:{img.shape})– performing MIP."
+            self.log(
+                f"Preprocessing: Image is not 2D (shape:{img.shape})– performing MIP."
             )
             self.raw_image = np.max(img, axis=0)
 
@@ -200,8 +223,8 @@ class Marker:
 
     def tv_denoising(self):
         if self.denoising_model_name is None:
-            self.logs["Preprocessing"].append(
-                "No denoising model specified. Using adaptive TV chambolle denoising."
+            self.log(
+                "Preprocessing: No denoising model specified. Using adaptive TV chambolle denoising."
             )
 
             # Get adaptive parameters for mild denoising
@@ -211,11 +234,12 @@ class Marker:
                 self.raw_image, weight=weight, max_num_iter=5
             )
 
-            self.logs["Denoising Parameters"] = {
+            denoising_params = {
                 "weight": weight,
                 "iterations": iterations,
                 "method": "adaptive_tv_chambolle",
             }
+            self.log(f"Denoising Parameters: {denoising_params}")
 
     @property
     def denoised_image(self):
@@ -230,7 +254,7 @@ class Marker:
                 self.segment()
             except Exception as e:
                 print(f"Error during automatic segmentation: {e}")
-                self.logs["Auto-segmentation Error"] = str(e)
+                self.log(f"Auto-segmentation Error: {e}")
 
     def segment(self, tv_denoise_if_needed=True, auto_features=False):
         if self.denoised_image is None and tv_denoise_if_needed:
@@ -259,7 +283,7 @@ class Marker:
 
         # self.segmentation = self.sam_model.segment(self.denoised_image)
         if self.compartment.lower() == "cell":
-            self.logs["Segmentation Compartment"] = self.compartment
+            self.log(f"Segmentation Compartment: {self.compartment}")
             # If there is more than one cell, keep only the one that is closest to the center
             if np.max(self.segmentation) > 1:
                 regions = measure.regionprops(self.segmentation)
@@ -275,11 +299,11 @@ class Marker:
                 self.segmentation = (self.segmentation == selected_label).astype(
                     np.int32
                 )
-                self.logs["Segmentation Note"] = (
-                    f"Multiple cells detected. Kept only the cell closest to the center (label {selected_label})."
+                self.log(
+                    f"Segmentation Note: Multiple cells detected. Kept only the cell closest to the center (label {selected_label})."
                 )
-        self.logs["Segmentation Info"] = self.sam_model.get_model_info()
-        self.logs["Segmentation Shape"] = self.segmentation.shape
+        self.log(f"Segmentation Info: {self.sam_model.get_model_info()}")
+        self.log(f"Segmentation Shape: {self.segmentation.shape}")
 
         self.features = {} if not auto_features else self.get_features()
 
