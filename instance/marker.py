@@ -319,4 +319,7 @@ class Marker:
             "IntensityFeatures": features_module.intensity_granule_features(
                 self.raw_image, self.segmentation
             ),
+            "AdvancedMorphology": features_module.advanced_granule_features(
+                self.segmentation
+            ),
         }

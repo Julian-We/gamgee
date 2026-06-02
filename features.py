@@ -6,6 +6,8 @@ from skimage import measure
 from scipy.fft import fft
 from skimage.measure import regionprops
 from scipy.spatial import cKDTree
+from scipy import stats
+
 
 def catch_error(default_value: Union[float, tuple, list] = np.nan):
     """
@@ -33,6 +35,7 @@ def catch_error(default_value: Union[float, tuple, list] = np.nan):
 def get_centroid(binary_mask):
     return ndimage.center_of_mass(binary_mask)
 
+
 @catch_error()
 def min_distance_to_object(binary_mask, point):
     """
@@ -53,6 +56,7 @@ def min_distance_to_object(binary_mask, point):
 
     return distance_map[y, x]
 
+
 @catch_error()
 def edge_distance_to_nucleus(mask_of_interest, nucleus_mask):
     """
@@ -63,8 +67,8 @@ def edge_distance_to_nucleus(mask_of_interest, nucleus_mask):
 
 
 @catch_error()
-def centroid_distance_to_nucleus(mask_of_interest, nucleus_mask ):
-    """ 
+def centroid_distance_to_nucleus(mask_of_interest, nucleus_mask):
+    """
     Calculate the distance of a masks centroid to the nucleus mask
     """
     centroid = get_centroid(mask_of_interest)
@@ -100,6 +104,7 @@ def iou(mask1, mask2):
     if union == 0:
         return 0.0
     return intersection / union
+
 
 def spherical_volume(mask):
     """
@@ -157,10 +162,12 @@ def ellipsoid_volume(mask):
     area = np.sum(mask)
     aspect_ratio = get_aspect_ratio(mask)
 
-
     # Calculate ellipsoid volumes
     base_radius = np.sqrt(area / (np.pi * aspect_ratio))
-    return (4 / 3) * np.pi * base_radius ** 3 * aspect_ratio, (4 / 3) * np.pi * base_radius ** 3 / aspect_ratio
+    return (4 / 3) * np.pi * base_radius**3 * aspect_ratio, (
+        4 / 3
+    ) * np.pi * base_radius**3 / aspect_ratio
+
 
 def nuclear_periphery(granule_label_image, nucleus_label_image, number_dilations):
     """
@@ -177,20 +184,27 @@ def nuclear_periphery(granule_label_image, nucleus_label_image, number_dilations
     data = []
     nucleus_periphery = np.logical_xor(
         ndimage.binary_dilation(nucleus_label_image == 1, iterations=number_dilations),
-        ndimage.binary_erosion(nucleus_label_image == 1, iterations=number_dilations)
+        ndimage.binary_erosion(nucleus_label_image == 1, iterations=number_dilations),
     )
     for granule_idx in np.unique(granule_label_image):
         if granule_idx == 0:
             continue
         granule_mask = granule_label_image == granule_idx
-        granule_dilated = ndimage.binary_dilation(granule_mask, iterations=number_dilations)
+        granule_dilated = ndimage.binary_dilation(
+            granule_mask, iterations=number_dilations
+        )
 
-
-        data.append({
-            'GranuleIndex': granule_idx,
-            'IsTouchingNuclearPeriphery': np.sum(np.logical_and(granule_dilated, nucleus_periphery)) > 0,
-        })
+        data.append(
+            {
+                "GranuleIndex": granule_idx,
+                "IsTouchingNuclearPeriphery": np.sum(
+                    np.logical_and(granule_dilated, nucleus_periphery)
+                )
+                > 0,
+            }
+        )
     return data
+
 
 def basic_granule_features(granule_label_image):
     data = []
@@ -199,34 +213,35 @@ def basic_granule_features(granule_label_image):
         return data
     granule_number = len(granule_props) - 1  # Exclude background label (0)
     for granule_lbl in granule_props:
-        data.append({
-            "GranuleIndex": granule_lbl.label,
-            "Area": granule_lbl.area,
-            "Perimeter": granule_lbl.perimeter,
-            "CentroidY": granule_lbl.centroid[0],
-            "CentroidX": granule_lbl.centroid[1],
-            "MajorAxisLength": granule_lbl.axis_major_length,
-            "MinorAxisLength": granule_lbl.axis_minor_length,
-            "Eccentricity": granule_lbl.eccentricity,
-            "Orientation": granule_lbl.orientation,
-            "GranuleNumberPerCell": granule_number,
-        })
-
+        data.append(
+            {
+                "GranuleIndex": granule_lbl.label,
+                "Area": granule_lbl.area,
+                "Perimeter": granule_lbl.perimeter,
+                "CentroidY": granule_lbl.centroid[0],
+                "CentroidX": granule_lbl.centroid[1],
+                "MajorAxisLength": granule_lbl.axis_major_length,
+                "MinorAxisLength": granule_lbl.axis_minor_length,
+                "Eccentricity": granule_lbl.eccentricity,
+                "Orientation": granule_lbl.orientation,
+                "GranuleNumberPerCell": granule_number,
+            }
+        )
 
     return data
 
+
 @catch_error(default_value=np.nan)
-def morans_i(image):
+def morans_i(image, mask):
     """
     Calculate Moran’s I for a 2D image array, ignoring zero pixels outside the mask.
     Returns:
         I (float): Moran’s I statistic (-1 to +1)
-   """
+    """
     image = np.array(image)
     rows, cols = image.shape
 
     # Identify non-zero pixels (masked region)
-    mask = image != 0
     y_coords, x_coords = np.where(mask)  # Coordinates of non-zero pixels
     n = len(mask[mask > 0].flatten())  # Number of non-zero pixels
 
@@ -242,9 +257,7 @@ def morans_i(image):
         return 0.0
 
     # Define neighbor directions (8-connected)
-    directions = [(-1, -1), (-1, 0), (-1, 1),
-                  (0, -1), (0, 1),
-                  (1, -1), (1, 0), (1, 1)]
+    directions = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
     numerator = 0.0
     W = 0.0  # Total valid neighbor pairs
@@ -271,7 +284,6 @@ def morans_i(image):
     return i
 
 
-
 def intensity_granule_features(granule_label_image, intensity_image):
     """
     Calculate intensity features for each granule in the granule label image.
@@ -284,27 +296,71 @@ def intensity_granule_features(granule_label_image, intensity_image):
         list: A list of dictionaries with granule index and intensity features.
     """
     data = []
-    granule_int_regionprops = measure.regionprops(granule_label_image, intensity_image=intensity_image)
+    granule_int_regionprops = measure.regionprops(
+        granule_label_image, intensity_image=intensity_image
+    )
 
     if not granule_int_regionprops:
         return data
 
     for granule_lbl in granule_int_regionprops:
-        data.append({
-            "GranuleIndex": granule_lbl.label,
-            "MeanIntensity": granule_lbl.mean_intensity,
-            "MinIntensity": granule_lbl.min_intensity,
-            "MaxIntensity": granule_lbl.max_intensity,
-            "StdIntensity": granule_lbl.intensity_std,
-            "WeightedCentroidY": granule_lbl.weighted_centroid[0],
-            "WeightedCentroidX": granule_lbl.weighted_centroid[1],
-            # "GranuleImage": granule_lbl.image_intensity,
-            "MoransI": morans_i(granule_lbl.image_intensity),
-            "GranuleSolidity": granule_lbl.solidity,
-        })
-
+        cropped_intensity_values = granule_lbl.image_intensity[
+            granule_lbl.image > 0
+        ].flatten()
+        data.append(
+            {
+                "GranuleIndex": granule_lbl.label,
+                "MeanIntensity": granule_lbl.mean_intensity,
+                "MinIntensity": granule_lbl.min_intensity,
+                "MaxIntensity": granule_lbl.max_intensity,
+                "StdIntensity": granule_lbl.intensity_std,
+                "WeightedCentroidY": granule_lbl.weighted_centroid[0],
+                "WeightedCentroidX": granule_lbl.weighted_centroid[1],
+                # "GranuleImage": granule_lbl.image_intensity,
+                "MoransI": morans_i(granule_lbl.image_intensity, granule_lbl.image),
+                "GranuleSolidity": granule_lbl.solidity,
+                "GranuleSkewness": stats.skew(cropped_intensity_values),
+                "GranuleKurtosis": stats.kurtosis(cropped_intensity_values),
+                "GranuleEntropy": stats.entropy(cropped_intensity_values + 1e-10),
+                "GranuleCV": np.std(cropped_intensity_values)
+                / (np.mean(cropped_intensity_values) + 1e-10),
+            }
+        )
 
     return data
+
+
+def advanced_granule_features(granule_label_image):
+    """
+    Calculate advanced features for each granule in the granule label image, such as solidity and convexity and the fourfourier series of the granule boundary.
+    """
+    data = []
+    region_props = measure.regionprops(granule_label_image)
+
+    fourier_series_data = granule_fourier_series(granule_label_image, n_harmonics=25)
+
+    for granule_lbl in region_props:
+        granule_data = {
+            "GranuleIndex": granule_lbl.label,
+            "GranuleSolidity": granule_lbl.solidity,
+            "GranuleConvexity": granule_lbl.convex_area / granule_lbl.area
+            if granule_lbl.area > 0
+            else np.nan,
+        }
+
+        # Add Fourier series data for this granule
+        fourier_data = next(
+            (
+                item
+                for item in fourier_series_data
+                if item["GranuleIndex"] == granule_lbl.label
+            ),
+            None,
+        )
+        if fourier_data:
+            granule_data.update(fourier_data)
+
+        data.append(granule_data)
 
 
 def polar_to_fourier_series(binary_mask, n_harmonics=25):
@@ -356,11 +412,11 @@ def polar_to_fourier_series(binary_mask, n_harmonics=25):
     max_harmonics = min(n_harmonics, len(fourier_coeffs))
     for i in range(max_harmonics):
         # Store both magnitude and phase instead of just real part
-        out_dict[f'FourierMagnitudeH{i}'] = np.abs(fourier_coeffs[i])
-        out_dict[f'FourierPhaseH{i}'] = np.angle(fourier_coeffs[i])
+        out_dict[f"FourierMagnitudeH{i}"] = np.abs(fourier_coeffs[i])
+        out_dict[f"FourierPhaseH{i}"] = np.angle(fourier_coeffs[i])
 
         # Or store the full complex coefficient
-        out_dict[f'FourierCoeffH{i}'] = fourier_coeffs[i]
+        out_dict[f"FourierCoeffH{i}"] = fourier_coeffs[i]
 
     return out_dict
 
@@ -384,13 +440,16 @@ def granule_fourier_series(granule_label_image, n_harmonics=50):
         binary_mask = ()
 
         # Get Fourier series for the current granule
-        fourier_data = polar_to_fourier_series(granule_label_image == label, n_harmonics=n_harmonics)
+        fourier_data = polar_to_fourier_series(
+            granule_label_image == label, n_harmonics=n_harmonics
+        )
 
         # Add label to the output dictionary
-        fourier_data['GranuleIndex'] = label
+        fourier_data["GranuleIndex"] = label
 
         data.append(fourier_data)
     return data
+
 
 @catch_error(default_value=np.nan)
 def hexagonality(label_image):
@@ -426,7 +485,7 @@ def hexagonality(label_image):
     distances, indices = tree.query(centroids, k=7)
 
     # Estimate lattice spacing as the median nearest-neighbour distance
-    nn_dist = distances[:, 1]                          # distance to closest neighbour
+    nn_dist = distances[:, 1]  # distance to closest neighbour
     lattice_spacing = np.median(nn_dist)
 
     scores = []
@@ -435,13 +494,13 @@ def hexagonality(label_image):
         if dists[6] > 1.5 * lattice_spacing:
             continue
 
-        neighbours = centroids[nbrs[1:]]              # (6, 2)
+        neighbours = centroids[nbrs[1:]]  # (6, 2)
         dy = neighbours[:, 0] - centroids[i, 0]
         dx = neighbours[:, 1] - centroids[i, 1]
         angles = np.sort(np.degrees(np.arctan2(dy, dx)) % 360)  # sorted in [0, 360)
 
         # Consecutive angular gaps including the wrap-around gap
-        gaps = np.diff(angles, append=angles[0] + 360)          # sum == 360°
+        gaps = np.diff(angles, append=angles[0] + 360)  # sum == 360°
 
         mean_dev = np.mean(np.abs(gaps - 60.0))
         scores.append(max(0.0, 1.0 - mean_dev / 60.0))
@@ -455,18 +514,23 @@ def hexagonality(label_image):
 def threshold_parameters(image_of_interest, confining_segmentation, percentile):
 
     try:
-        binary_image = image_of_interest > np.percentile(image_of_interest[confining_segmentation > 0], percentile)
+        binary_image = image_of_interest > np.percentile(
+            image_of_interest[confining_segmentation > 0], percentile
+        )
         binary_image = ndimage.binary_opening(binary_image)
 
         return {
-                f"percentile{percentile}_area": np.sum(binary_image),
-                f"percentile{percentile}_mean_intensity": np.mean(image_of_interest[binary_image]),
-                f"percentile{percentile}_sum_intensity": np.min(image_of_interest[binary_image]),
-                }
+            f"percentile{percentile}_area": np.sum(binary_image),
+            f"percentile{percentile}_mean_intensity": np.mean(
+                image_of_interest[binary_image]
+            ),
+            f"percentile{percentile}_sum_intensity": np.min(
+                image_of_interest[binary_image]
+            ),
+        }
     except Exception as e:
         return {
-                f"percentile{percentile}_area": np.nan,
-                f"percentile{percentile}_mean_intensity": np.nan,
-                f"percentile{percentile}_sum_intensity": np.nan,
-                }
-
+            f"percentile{percentile}_area": np.nan,
+            f"percentile{percentile}_mean_intensity": np.nan,
+            f"percentile{percentile}_sum_intensity": np.nan,
+        }
