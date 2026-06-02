@@ -4,7 +4,7 @@ import functools
 from typing import Callable, Union, Any
 from skimage import measure
 from scipy.fft import fft
-from skimage.measure import regionprops
+from skimage.measure import regionprops, manders_coloc_coeff
 from scipy.spatial import cKDTree
 from scipy import stats
 
@@ -73,6 +73,25 @@ def centroid_distance_to_nucleus(mask_of_interest, nucleus_mask):
     """
     centroid = get_centroid(mask_of_interest)
     return min_distance_to_object(nucleus_mask, centroid)
+
+
+def nuclear_distance_features(granule_label_image, nucleus_mask):
+    region_props = measure.regionprops(granule_label_image)
+
+    for granule_lbl in region_props:
+        granule_mask = granule_label_image == granule_lbl.label
+        yield {
+            "GranuleIndex": granule_lbl.label,
+            "EdgeDistanceToNucleus": edge_distance_to_nucleus(
+                granule_mask, nucleus_mask
+            ),
+            "CentroidDistanceToNucleus": centroid_distance_to_nucleus(
+                granule_mask, nucleus_mask
+            ),
+            "TouchAreaNucleus": touch_area(
+                granule_mask, nucleus_mask, number_dilations=2
+            ),
+        }
 
 
 def touch_area(mask1, mask2, number_dilations):
@@ -346,6 +365,9 @@ def advanced_granule_features(granule_label_image):
             "GranuleConvexity": granule_lbl.convex_area / granule_lbl.area
             if granule_lbl.area > 0
             else np.nan,
+            "SphericalVolume": spherical_volume(granule_lbl.image),
+            "EllipsoidVolumeProlate": ellipsoid_volume(granule_lbl.image)[0],
+            "EllipsoidVolumeOblate": ellipsoid_volume(granule_lbl.image)[1],
         }
 
         # Add Fourier series data for this granule
@@ -534,3 +556,44 @@ def threshold_parameters(image_of_interest, confining_segmentation, percentile):
             f"percentile{percentile}_mean_intensity": np.nan,
             f"percentile{percentile}_sum_intensity": np.nan,
         }
+
+
+def manders_across_percentiles(imgA, imgB, step=0.1, mask=None):
+    percentile_data = []
+    for percentile in np.arange(0, 100 + step, step):
+        if mask is None:
+            threshold_A = np.percentile(imgA, percentile)
+            threshold_B = np.percentile(imgB, percentile)
+        else:
+            threshold_A = np.percentile(imgA[mask > 0], percentile)
+            threshold_B = np.percentile(imgB[mask > 0], percentile)
+
+        binary_A = imgA > threshold_A
+        binary_B = imgB > threshold_B
+
+        m1 = manders_coloc_coeff(imgA, binary_B, mask=mask)
+        m2 = manders_coloc_coeff(imgB, binary_A, mask=mask)
+
+        percentile_data.append(
+            {
+                "Percentile": percentile,
+                "M1": m1,
+                "M2": m2,
+            }
+        )
+    return percentile_data
+
+
+def manders(img, segmentation, mask=None):
+    return manders_coloc_coeff(img, segmentation > 0, mask=mask)
+
+
+def pearsons(imgA, imgB, mask=None):
+    if mask is not None:
+        imgA = imgA[mask > 0]
+        imgB = imgB[mask > 0]
+
+    if len(imgA) == 0 or len(imgB) == 0:
+        return np.nan
+
+    return stats.pearsonr(imgA.flatten(), imgB.flatten())[0]
