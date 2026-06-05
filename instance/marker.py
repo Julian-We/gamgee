@@ -79,10 +79,13 @@ class Marker:
             self.log(f"Denoising Model: {self.denoising_model_name}")
         # Define data attributes
         self.raw_image = None
-        self._denoised_image = None  # Private attribute to store the actual value
         self.segmentation = None
 
         self.identify_image()
+        if kwargs.get("denoising", False) is not None:
+            self._denoised_image = None  # Private attribute to store the actual value
+        else:
+            self._denoised_image = self.raw_image
         self.preprocess()
         # Generate freatue dictionary. Keys should be feature names, values the corresponding values or a list of values
         self.features = None
@@ -256,11 +259,12 @@ class Marker:
                 print(f"Error during automatic segmentation: {e}")
                 self.log(f"Auto-segmentation Error: {e}")
 
-    def segment(self, tv_denoise_if_needed=True, auto_features=False):
+    def segment(self, tv_denoise_if_needed=False, auto_features=False):
         if self.denoised_image is None and tv_denoise_if_needed:
             self.tv_denoising()
         if self.denoised_image is None:
-            raise ValueError("Denoised image is not available for segmentation.")
+            self.denoised_image = self.raw_image
+            self.log("No denoised image available. Using raw image for segmentation.")
         if self.sam_model is None:
             raise ValueError("SAM model is not set for segmentation.")
 
@@ -280,6 +284,9 @@ class Marker:
 
         with lock:
             self.segmentation = self.sam_model.segment(self.denoised_image)
+            self.log(
+                f"Segmentation completed using model: {self.sam_model.friendly_name}"
+            )
 
         # self.segmentation = self.sam_model.segment(self.denoised_image)
         if self.compartment.lower() == "cell":
@@ -317,7 +324,7 @@ class Marker:
                 self.segmentation
             ),
             "IntensityFeatures": features_module.intensity_granule_features(
-                self.raw_image, self.segmentation
+                self.segmentation, self.raw_image
             ),
             "AdvancedMorphology": features_module.advanced_granule_features(
                 self.segmentation

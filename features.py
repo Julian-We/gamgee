@@ -37,42 +37,50 @@ def get_centroid(binary_mask):
 
 
 @catch_error()
-def min_distance_to_object(binary_mask, point):
+def min_distance_to_object(binary_mask, point, signed=False):
     """
-    Calculate minimal distance from a point to a binary blob.
+    Calculate minimal distance from a point to a binary blob, optionally signed.
 
     Args:
         binary_mask: 2D binary array where blob pixels are True/1
         point: tuple (y, x) coordinates of the point
 
-    Returns:
-        float: Minimal distance in pixels
     """
-    # Create distance transform (distance to nearest blob pixel)
-    distance_map = ndimage.distance_transform_edt(~binary_mask)
 
-    # Get distance at the specific point - convert to integers for indexing
     y, x = int(round(point[0])), int(round(point[1]))
 
-    return distance_map[y, x]
+    if signed:
+        outward_distance_map = ndimage.distance_transform_edt(~(binary_mask > 0))
+        inward_distance_map = ndimage.distance_transform_edt(binary_mask > 0)
+        signed_distance_map = outward_distance_map.copy()
+        signed_distance_map[binary_mask > 0] = -inward_distance_map[binary_mask > 0]
+        return signed_distance_map[y, x]
+
+    return ndimage.distance_transform_edt(~(binary_mask > 0))[y, x]
 
 
 @catch_error()
-def edge_distance_to_nucleus(mask_of_interest, nucleus_mask):
+def centroid_distance_to_nucleus(mask_of_interest, nucleus_mask, signed=True):
     """
-    Calculate the distance of a masks edge to the nucleus mask
-    """
-    mask_of_interest_distance_map = ndimage.distance_transform_edt(~mask_of_interest)
-    return min(mask_of_interest_distance_map[nucleus_mask > 0])
+    Calculate the distance of a masks centroid to the nucleus mask, optionally signed.
 
-
-@catch_error()
-def centroid_distance_to_nucleus(mask_of_interest, nucleus_mask):
-    """
-    Calculate the distance of a masks centroid to the nucleus mask
     """
     centroid = get_centroid(mask_of_interest)
-    return min_distance_to_object(nucleus_mask, centroid)
+    return min_distance_to_object(nucleus_mask, centroid, signed=signed)
+
+
+@catch_error()
+def edge_distance_to_nucleus(mask_of_interest, nucleus_mask, signed=False):
+    if signed:
+        outward_distance_map = ndimage.distance_transform_edt(~(nucleus_mask > 0))
+        inward_distance_map = ndimage.distance_transform_edt(nucleus_mask > 0)
+        signed_distance_map = outward_distance_map.copy()
+        signed_distance_map[nucleus_mask > 0] = -inward_distance_map[nucleus_mask > 0]
+        return signed_distance_map[mask_of_interest > 0].min()
+
+    return ndimage.distance_transform_edt(~(nucleus_mask > 0))[
+        mask_of_interest > 0
+    ].min()
 
 
 def nuclear_distance_features(granule_label_image, nucleus_mask):
@@ -85,11 +93,17 @@ def nuclear_distance_features(granule_label_image, nucleus_mask):
             "EdgeDistanceToNucleus": edge_distance_to_nucleus(
                 granule_mask, nucleus_mask
             ),
+            "EdgeDistanceToNucleusSigned": edge_distance_to_nucleus(
+                granule_mask, nucleus_mask, signed=True
+            ),
             "CentroidDistanceToNucleus": centroid_distance_to_nucleus(
                 granule_mask, nucleus_mask
             ),
+            "CentroidDistanceToNucleusSigned": centroid_distance_to_nucleus(
+                granule_mask, nucleus_mask, signed=True
+            ),
             "TouchAreaNucleus": touch_area(
-                granule_mask, nucleus_mask, number_dilations=2
+                granule_mask, nucleus_mask, number_dilations=1
             ),
         }
 
@@ -383,6 +397,7 @@ def advanced_granule_features(granule_label_image):
             granule_data.update(fourier_data)
 
         data.append(granule_data)
+    return data
 
 
 def polar_to_fourier_series(binary_mask, n_harmonics=25):
@@ -558,6 +573,7 @@ def threshold_parameters(image_of_interest, confining_segmentation, percentile):
         }
 
 
+@catch_error()
 def manders_across_percentiles(imgA, imgB, step=0.1, mask=None):
     percentile_data = []
     for percentile in np.arange(0, 100 + step, step):
@@ -584,10 +600,12 @@ def manders_across_percentiles(imgA, imgB, step=0.1, mask=None):
     return percentile_data
 
 
+@catch_error()
 def manders(img, segmentation, mask=None):
     return manders_coloc_coeff(img, segmentation > 0, mask=mask)
 
 
+@catch_error()
 def pearsons(imgA, imgB, mask=None):
     if mask is not None:
         imgA = imgA[mask > 0]
