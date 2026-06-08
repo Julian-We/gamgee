@@ -615,3 +615,171 @@ def pearsons(imgA, imgB, mask=None):
         return np.nan
 
     return stats.pearsonr(imgA.flatten(), imgB.flatten())[0]
+
+
+def relative_nuclear_distance(
+    point,
+    nucleus_mask: np.ndarray,
+    cell_mask: np.ndarray,
+) -> dict:
+    """
+    Compute where a point lies along the axis from the nucleus centroid outward
+    to the cell boundary, normalised so that:
+
+        -1  → nucleus centroid
+         0  → nucleus / cytoplasm boundary  (ray exits nucleus)
+        +1  → cell boundary  (ray exits cell)
+
+    Points inside the nucleus return values in [-1, 0].
+    Points in the cytoplasm return values in [0, 1].
+
+    Parameters
+    ----------
+    point : (row, col) in the same pixel coordinate space as the masks.
+    nucleus_mask : 2-D boolean / uint array; non-zero pixels belong to the nucleus.
+    cell_mask    : 2-D boolean / uint array; non-zero pixels belong to the cell
+                   (must contain the nucleus region).
+
+    Returns
+    -------
+    dict with keys:
+        "SignedRelativeDistance"
+            Piecewise-linear value in [-1, +1] as described above.
+            Returns np.nan if the point lies outside the cell mask.
+
+        "NucleusBoundaryFraction"
+            d_nuc / (d_nuc + d_cyto):  the fraction of the total ray length
+            (centroid → cell boundary) that is occupied by the nucleus segment.
+            Equivalent to your original NucleusToCellBoundaryPercent.
+
+        "NucleusBoundaryIntersection"
+            (row, col) float – where the ray crosses the nucleus boundary.
+
+        "CellBoundaryIntersection"
+            (row, col) float – where the ray crosses the cell boundary.
+    """
+    point = np.asarray(point, dtype=float)
+
+    # ------------------------------------------------------------------
+    # 1.  Nucleus centroid
+    # ------------------------------------------------------------------
+    nuc_props = regionprops((nucleus_mask > 0).astype(np.uint8))
+    if not nuc_props:
+        raise ValueError("nucleus_mask contains no labelled region.")
+    centroid = np.array(nuc_props[0].centroid, dtype=float)  # (row, col)
+
+    # ------------------------------------------------------------------
+    # 2.  Ray direction: centroid → point
+    #     If the point IS the centroid we cannot define a direction; fall back
+    #     to a zero-length result of exactly -1.
+    # ------------------------------------------------------------------
+    direction = point - centroid
+    dist_to_point = np.linalg.norm(direction)
+
+    if dist_to_point < 1e-9:
+        # Point is at the centroid → deepest interior value
+        return {
+            "SignedRelativeDistance": -1.0,
+            "NucleusBoundaryFraction": np.nan,
+            "NucleusBoundaryIntersection": tuple(centroid),
+            "CellBoundaryIntersection": tuple(centroid),
+        }
+
+    unit = direction / dist_to_point
+
+    # ------------------------------------------------------------------
+    # 3.  Helper: find the first intersection of the ray with a binary mask's
+    #     boundary contour, marching outward from `start` in `direction`.
+    # ------------------------------------------------------------------
+    def _ray_mask_intersection(
+        mask: np.ndarray, start: np.ndarray, unit_vec: np.ndarray
+    ) -> np.ndarray:
+        """
+        Walk along the ray in sub-pixel steps and return the (row, col) of the
+        first pixel that transitions from inside → outside (or outside → inside)
+        the mask.  Falls back to contour-segment intersection for sub-pixel accuracy.
+        """
+        h, w = mask.shape
+
+        # Coarse march to find approximate crossing distance
+        step = 0.5  # pixels
+        max_steps = int(np.hypot(h, w) / step) + 10
+        prev_inside = _sample_mask(mask, start, h, w)
+
+        crossing_dist = None
+        for i in range(1, max_steps):
+            pos = start + unit_vec * (i * step)
+            inside = _sample_mask(mask, pos, h, w)
+            if inside != prev_inside:
+                crossing_dist = (i - 0.5) * step
+                break
+            prev_inside = inside
+
+        if crossing_dist is None:
+            # Ray never crosses – return a far-away fallback
+            return start + unit_vec * max_steps * step
+
+        # Refine with binary search
+        lo, hi = (crossing_dist - step), crossing_dist
+        for _ in range(20):
+            mid = (lo + hi) / 2
+            if _sample_mask(mask, start + unit_vec * mid, h, w) == prev_inside:
+                lo = mid
+            else:
+                hi = mid
+        return start + unit_vec * ((lo + hi) / 2)
+
+    def _sample_mask(mask, pos, h, w):
+        r, c = int(round(pos[0])), int(round(pos[1]))
+        r = max(0, min(h - 1, r))
+        c = max(0, min(w - 1, c))
+        return mask[r, c] > 0
+
+    # ------------------------------------------------------------------
+    # 4.  Find the two boundary crossings
+    # ------------------------------------------------------------------
+    nuc_boundary_pt = _ray_mask_intersection(nucleus_mask > 0, centroid, unit)
+    cell_boundary_pt = _ray_mask_intersection(cell_mask > 0, centroid, unit)
+
+    d_nuc = np.linalg.norm(nuc_boundary_pt - centroid)
+    d_total = np.linalg.norm(cell_boundary_pt - centroid)
+    d_cyto = d_total - d_nuc
+
+    # Guard against degenerate geometry
+    if d_nuc < 1e-9 or d_cyto < 1e-9:
+        nuc_boundary_fraction = np.nan
+    else:
+        nuc_boundary_fraction = d_nuc / d_total
+
+    # ------------------------------------------------------------------
+    # 5.  Signed relative distance
+    # ------------------------------------------------------------------
+    point_inside_cell = _sample_mask(cell_mask > 0, point, *cell_mask.shape)
+    if not point_inside_cell:
+        signed = np.nan
+    elif d_nuc < 1e-9:
+        signed = np.nan
+    else:
+        point_inside_nucleus = _sample_mask(
+            nucleus_mask > 0, point, *nucleus_mask.shape
+        )
+        if point_inside_nucleus:
+            # Map [centroid … nucleus boundary] → [-1 … 0]
+            signed = -1.0 + dist_to_point / d_nuc
+            signed = float(np.clip(signed, -1.0, 0.0))
+        else:
+            # Map [nucleus boundary … cell boundary] → [0 … 1]
+            if d_cyto < 1e-9:
+                signed = 0.0
+            else:
+                signed = (dist_to_point - d_nuc) / d_cyto
+                signed = float(np.clip(signed, 0.0, 1.0))
+
+    return {
+        "SignedRelativeDistance": signed,
+        "NucleusBoundaryFraction": float(nuc_boundary_fraction)
+        if not np.isnan(nuc_boundary_fraction)
+        else np.nan,
+        "NucleusBoundaryIntersection": tuple(nuc_boundary_pt),
+        "CellBoundaryIntersection": tuple(cell_boundary_pt),
+    }
