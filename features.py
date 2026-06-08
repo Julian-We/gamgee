@@ -4,7 +4,7 @@ import functools
 from typing import Callable, Union, Any
 from skimage import measure
 from scipy.fft import fft
-from skimage.measure import regionprops, manders_coloc_coeff
+from skimage.measure import regionprops, manders_coloc_coeff, find_contours
 from scipy.spatial import cKDTree
 from scipy import stats
 
@@ -83,11 +83,15 @@ def edge_distance_to_nucleus(mask_of_interest, nucleus_mask, signed=False):
     ].min()
 
 
-def nuclear_distance_features(granule_label_image, nucleus_mask):
+def nuclear_distance_features(granule_label_image, nucleus_mask, cell_mask):
     region_props = measure.regionprops(granule_label_image)
 
     for granule_lbl in region_props:
         granule_mask = granule_label_image == granule_lbl.label
+        relative_distance = relative_nuclear_distance(
+            get_centroid(granule_mask), nucleus_mask, cell_mask
+        )
+
         yield {
             "GranuleIndex": granule_lbl.label,
             "EdgeDistanceToNucleus": edge_distance_to_nucleus(
@@ -104,6 +108,12 @@ def nuclear_distance_features(granule_label_image, nucleus_mask):
             ),
             "TouchAreaNucleus": touch_area(
                 granule_mask, nucleus_mask, number_dilations=1
+            ),
+            "RelativeNuclearDistance": relative_distance.get(
+                "SignedRelativeDistance", np.nan
+            ),
+            "FranctionAlongRayToCellBoundary": relative_distance.get(
+                "NucleusBoundaryFraction", np.nan
             ),
         }
 
@@ -617,6 +627,7 @@ def pearsons(imgA, imgB, mask=None):
     return stats.pearsonr(imgA.flatten(), imgB.flatten())[0]
 
 
+@catch_error()
 def relative_nuclear_distance(
     point,
     nucleus_mask: np.ndarray,
