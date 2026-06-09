@@ -797,3 +797,22 @@ def relative_nuclear_distance(
         "NucleusBoundaryIntersection": tuple(nuc_boundary_pt),
         "CellBoundaryIntersection": tuple(cell_boundary_pt),
     }
+
+
+def granule_to_cytoplasm_intensity_ratio(
+    intensity_image, granule_mask, nucleus_mask, cell_mask
+):
+    """
+    Calculate granule to cytoplasm intensity ratio by dividing the mean intensity of the granule
+    """
+    granule_mask = granule_mask > 0
+    cell_mask = cell_mask > 0
+    nucleus_mask = nucleus_mask > 0
+
+    # Get cytoplamic mask by subtracting granules+nucleus from cell mask
+    nuclues_and_granules_mask = np.logical_or(nucleus_mask, granule_mask)
+    cytoplasm_mask = np.logical_and(cell_mask, ~nuclues_and_granules_mask)
+
+    return np.mean(intensity_image[granule_mask]) / (
+        np.mean(intensity_image[cytoplasm_mask]) + 1e-15
+    )
