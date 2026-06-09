@@ -91,6 +91,9 @@ def nuclear_distance_features(granule_label_image, nucleus_mask, cell_mask):
         relative_distance = relative_nuclear_distance(
             get_centroid(granule_mask), nucleus_mask, cell_mask
         )
+        relative_distance = (
+            relative_distance if isinstance(relative_distance, dict) else {}
+        )
 
         yield {
             "GranuleIndex": granule_lbl.label,
