@@ -1,352 +1,438 @@
-import uuid
-import matplotlib.pyplot as plt
-from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from .marker import Marker
-from gamgee.denoising_interface import denoise_with_care
-from .segmentations import clean_cell_segmentations, delete_outside_objects
-from .modelhandler import ModelHandler
+import sys
+import copy
+from .instance import Marker
+import gamgee.features as features
 import tifffile as tiff
-import pickle
-
-
-def load_instance(instance_path: str):
-    """Load a TheCell instance from a pickle file."""
-    instance_path = Path(instance_path)
-    if not instance_path.exists():
-        raise ValueError(f"Instance path {instance_path} does not exist.")
-    with open(instance_path, "rb") as f:
-        loaded_instance = pickle.load(f)
-    return loaded_instance
+import numpy as np
+import re
+from datetime import datetime
+from pathlib import Path
+import scipy.ndimage as ndi
+from skimage import measure
 
 
 class TheCell:
     def __init__(
         self,
-        root_path: str | Path,
-        model_handler: ModelHandler,
-        name=None,
-        blacklist=None,
-        refine_segmentations=True,
-        denoise_blocker=True,
-        uid=None,
-        condition=None,
-        **kwargs,
+        path: str | Path,
+        full_auto=False,
+        conditions=[],
+        model_handler=None,
+        model_handler_id: str | None = None,
+        granuleA="dnd1",
+        granuleB="gra",
     ):
-        """Initialize a cell instance.
-        Args:
-            name (str): Name of the cell.
-            blacklist (list): List of folder names to ignore when scanning for markers.
-            root_path (str): Path to the root directory containing marker folders.
-            model_handler (ModelHandler): Instance of ModelHandler to manage segmentation models.
-            refine_segmentations (bool): Whether to refine segmentations after denoising.
-        """
-        self.root = Path(root_path)
-        self.image_root = self.root
-        self.output_root = self.root / "output"
-        self.output_root.mkdir(exist_ok=True, parents=True)
-        self.name = name if name is not None else self.root.name
-        self.uid = uuid.uuid4().hex[:8] if uid is None else uid
-        self.denoise_blocker = denoise_blocker
-        self.condition = condition
-        self.all_features = {}
+        self.logs = {}
+        path = Path(path) if isinstance(path, str) else path
+        self.path = path
+        full_name = path.name
+        uid, file_name = full_name.split("__", 1)
+        file_name_splits = file_name.split("_")
+        # Find date structure in the splits (YYYYMMDD or YYYY-MM-DD)
 
-        # Default blacklist for common non-marker folders
-        if blacklist is None:
-            blacklist = [
-                ".git",
-                "__pycache__",
-                ".DS_Store",
-                "models",
-                "utils",
-                "temp",
-                "cache",
-                "logs",
-                "export",
-                "results",
-                "denoised",
-                "segmentations",
-                "masks",
-                "output",
-                "xprt",
-                "raw",
-            ]
-        self.blacklist = blacklist
+        date_str: str = ""
+        cell_condition: str = ""
+        dev_stage: str = ""
+        for split in file_name_splits:
+            if re.match(r"\d{8}", split) or re.match(r"\d{4}-\d{2}-\d{2}", split):
+                date = (
+                    datetime.strptime(split, "%Y%m%d")
+                    if len(split) == 8
+                    else datetime.strptime(split, "%Y-%m-%d")
+                )
+                # Date to iso
+                date_str = date.isoformat()
+                continue
+            for condition in conditions:
+                if condition.lower() in split.lower():
+                    cell_condition = condition
 
-        self.logs = {
-            "Name": self.name,
-            "Cell ID": self.uid,
+            if "hpf" in split.lower():
+                dev_stage = split
+
+        self.uid = uid
+        self.acquisition_date = date_str
+        self.condition = cell_condition
+        self.stage = dev_stage
+        self.name = file_name
+        self.features: dict = {}
+
+        self.granuleA = granuleA
+        self.granuleB = granuleB
+
+        self.log(
+            f"Initialized cell with UID: {self.uid}, acquisition date: {self.acquisition_date}, condition: {self.condition}"
+        )
+
+        self.model_handler_id = model_handler_id
+        self.markers = self._populate_markers(model_handler)
+
+    def attach_model_handler(self, model_handler, model_handler_id: str | None = None):
+        if model_handler_id is not None:
+            self.model_handler_id = model_handler_id
+        for marker in self.markers.values():
+            if hasattr(marker, "sam_model"):
+                marker.set_sam_model(model_handler)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        markers = state.get("markers")
+        if markers:
+            stripped_markers = {}
+            for name, marker in markers.items():
+                marker_copy = copy.copy(marker)
+                # for k, v in marker_copy.__dict__.items():
+                #     print(f"{k}\t {v}")
+                #     print("\n")
+                if hasattr(marker_copy, "sam_model"):
+                    marker_copy.sam_model = None
+                stripped_markers[name] = marker_copy
+            state["markers"] = stripped_markers
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        if not hasattr(self, "model_handler_id"):
+            self.model_handler_id = None
+
+    def log(self, message: str):
+        self.logs[datetime.now().isoformat()] = f"THECELL: {message}"
+
+    def print_logs(self):
+        for timestamp, message in self.logs.items():
+            print(f"{timestamp}: {message}")
+
+    def _populate_markers(self, model_handler):
+        images_dir = self.path / "images"
+        return {
+            self.granuleA: Marker(
+                image_path=images_dir / f"{self.granuleA}.tif",
+                parent_name=self.name,
+                parent_id=self.uid,
+                model_handler=model_handler,
+                compartment="granules",
+            ),
+            self.granuleB: Marker(
+                image_path=images_dir / f"{self.granuleB}.tif",
+                parent_name=self.name,
+                parent_id=self.uid,
+                model_handler=model_handler,
+                compartment="granules",
+            ),
+            "nucleus": Marker(
+                image_path=images_dir / "nls.tif",
+                parent_name=self.name,
+                parent_id=self.uid,
+                model_handler=model_handler,
+                compartment="nucleus",
+            ),
+            "cell": Marker(
+                image_path=images_dir / "nls.tif",
+                parent_name=self.name,
+                parent_id=self.uid,
+                model_handler=model_handler,
+                compartment="cell",
+            ),
         }
 
-        self.markers = {}
-        self.care_denoising_models = {}
-        self.markers_compartments = {}
-        self.model_handler = model_handler
-
-        # Scan for marker folders and create Marker objects
-        self._scan_and_create_markers()
-        # print(f"Found {len(self.markers)} markers for cell '{self.name}'.")
-        if not denoise_blocker:
-            self.denoise()
-        else:
-            for marker in self.markers.values():
-                marker.denoised_image = marker.raw_image
-
-        # if refine_segmentations:
-        #     self.refine_segmentations()
-
-        self.plot_markers_and_segmentations()
-
-        self.save_segmentations()
-
-    def _scan_and_create_markers(self):
-        """Scan root directory directly for image files. If none found, look for subfolders containing single image files."""
-        if not self.root.exists():
-            raise ValueError(f"Root path {self.root} does not exist.")
-
-        # Check for "raw" or "MIP" subfolders
-        potential_subfolders = ["raw", "mip", "mips", "imgs"]
-        for subfolder in self.image_root.iterdir():
-            if subfolder.is_dir() and subfolder.name.lower() in potential_subfolders:
-                self.image_root = subfolder
-                print(
-                    f"Found subfolder '{subfolder.name}' for images. Updating image root to {self.image_root}"
-                )
-                break
-
-        valid_extensions = [".tif", ".tiff", ".png", ".jpg", ".jpeg", ".bmp", ".gif"]
-
-        # Scan for images in root directory
-        image_files = [
-            f
-            for f in self.image_root.iterdir()
-            if f.is_file()
-            and f.suffix.lower() in valid_extensions
-            and not f.name.startswith(".")
-        ]
-        print(
-            f"Found {len(image_files)} image files in root directory {self.image_root}"
-        )
-        if image_files:
-            for image_file in image_files:
-                try:
-                    marker_name = (
-                        image_file.stem
-                        if not "nls" in image_file.stem.lower()
-                        else "nls_nucleus"
-                    )
-                    marker = Marker(
-                        image_path=image_file,
-                        parent_name=self.name,
-                        parent_id=self.uid,
-                        model_handler=self.model_handler,
-                    )
-                    self.markers[marker_name] = marker
-                    self.logs[f"Marker_{marker_name}"] = "Created successfully"
-                    if "nls" in marker_name.lower():
-                        print(image_file)
-                        marker_name = marker_name.replace("nucleus", "cell")
-                        marker = Marker(
-                            image_path=image_file,
-                            parent_name=self.name,
-                            parent_id=self.uid,
-                            model_handler=self.model_handler,
-                            compartment="cell",
-                        )
-                        self.markers[marker_name] = marker
-                        self.markers_compartments[marker_name] = "cell"
-                        self.logs[f"Marker_{marker_name}"] = (
-                            "Created as cell compartment based on name"
-                        )
-
-                except Exception as e:
-                    print(e)
-                    self.logs[f"Marker_{marker_name}_Error"] = str(e)
-        else:
-            self.logs["Image.Root"] = "No image files found in root directory"
-            print(f"Warning: No image files found in root directory {self.image_root}")
-
-            # Scan for folders containing single image files
-            for folder in self.image_root.iterdir():
-                if folder.is_dir() and folder.name not in self.blacklist:
-                    image_files = [
-                        f
-                        for f in folder.iterdir()
-                        if f.is_file() and f.suffix.lower() in valid_extensions
-                    ]
-                    if len(image_files) == 1:
-                        try:
-                            marker_name = folder.name
-                            marker = Marker(
-                                image_path=image_files[0],
-                                name=marker_name,
-                                parent_name=self.name,
-                                parent_id=self.uid,
-                                parent_root=self.image_root,
-                                model_handler=self.model_handler,
-                            )
-                            self.markers[marker_name] = marker
-                            self.logs[f"Marker_{marker_name}"] = "Created successfully"
-                        except Exception as e:
-                            print(e)
-                            self.logs[f"Marker_{marker_name}_Error"] = str(e)
-                    elif len(image_files) == 0:
-                        self.logs[f"Folder_{folder.name}"] = "No image files found"
-                        print(f"Warning: No image files found in folder {folder}")
-                    else:
-                        self.logs[f"Folder_{folder.name}"] = (
-                            f"Multiple image files found ({len(image_files)})"
-                        )
-                        print(
-                            f"Warning: Multiple image files found in folder {folder}, skipping."
-                        )
-
-    def denoise(self, use_tv_denoising=False, max_workers=None):
-        """Denoise all markers in parallel.
-
-        Args:
-            use_tv_denoising (bool): If True, use TV denoising instead of CARE models
-            max_workers (int): Maximum number of parallel workers. If None, uses number of CPU cores
+    def write_segmentations(self):
         """
-        if not self.markers:
-            raise ValueError("No markers found to process.")
+        Write segmenatations from TheCell to disk. Funtion mean to be used befor screening and refining segmentations
+        """
+        mask_dir = self.path / "masks"
+        mask_dir.mkdir(exist_ok=True)
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_marker = {}
-            for marker in self.markers.values():
-                if use_tv_denoising or marker.denoising_model_name is None:
-                    future = executor.submit(self._denoise_marker_tv, marker)
-                else:
-                    future = executor.submit(self._denoise_marker_care, marker)
-                future_to_marker[future] = marker.name
-
-            for future in as_completed(future_to_marker):
-                marker_name = future_to_marker[future]
-                # try:
-                future.result()
-                self.logs[f"Denoising_{marker_name}"] = (
-                    "Denoising completed successfully"
-                )
-                # except Exception as e:
-                #     self.logs[f"Denoising_{marker_name}_Error"] = str(e)
-
-    def _denoise_marker_care(self, marker):
-        """Denoise a single marker using CARE model."""
-        if marker.denoising_model_name is None:
-            # If no CARE model specified, fall back to TV denoising
-            self._denoise_marker_tv(marker)
-        else:
-            # Use CARE denoising for single marker
-            denoise_with_care([marker], model_name=marker.denoising_model_name)
-
-    def _denoise_marker_tv(self, marker):
-        """Denoise a single marker using TV denoising."""
-        marker.tv_denoising()
-
-    def refine_segmentations(self):
-        if "cell" in self.markers_compartments.values():
-            nucleus_markers = []
-            granule_markers = []
-            for marker_name, marker_compartment in self.markers_compartments.items():
-                if marker_compartment == "cell":
-                    cell_marker = self.markers[marker_name]
-                    break
-                if marker_compartment == "nucleus":
-                    nucleus_markers.append(self.markers[marker_name])
-                if marker_compartment == "granule":
-                    granule_markers.append(self.markers[marker_name])
-
-            # Fuse and/or select cell segmentation
-            self.markers["cell"].segmentation = clean_cell_segmentations(
-                self.markers["cell"].segmentation
-            )
-
-            # Kick out nucleus and granule objects outside cell
-            for nucleus_marker in nucleus_markers:
-                nucleus_marker.segmentation = delete_outside_objects(
-                    nucleus_marker.segmentation, self.markers["cell"].segmentation
-                )
-            for granule_marker in granule_markers:
-                granule_marker.segmentation = delete_outside_objects(
-                    granule_marker.segmentation, self.markers["cell"].segmentation
-                )
-
-    def save_segmentations(self):
-        """Save segmentation masks for all markers."""
-        print(f"The markers are{self.markers.keys()}")
         for marker_name, marker in self.markers.items():
-            seg_out_dir = self.root / "segmentations" / f"{marker_name}.tif"
-            seg_out_dir.parent.mkdir(parents=True, exist_ok=True)
-            seg_path = seg_out_dir
-            tiff.imwrite(seg_path, marker.segmentation.astype("uint16"))
+            output_path = mask_dir / f"{marker_name}.tif"
+            tiff.imwrite(output_path, marker.segmentation.astype(np.uint16))
 
-    def plot_markers_and_segmentations(self):
+    def read_segmentations(self):
+        """
+        Read segmentations from disk to TheCell. Function meant to be used after screening and refining segmentations
+        """
+        mask_dir = self.path / "masks"
 
-        num_markers = len(self.markers)
-        if num_markers == 0:
-            print("No markers to plot.")
+        for marker_name, marker in self.markers.items():
+            segmentation_path = mask_dir / f"{marker_name}.tif"
+            if segmentation_path.exists():
+                # print("Got segmentation")
+                marker.segmentation = measure.label(tiff.imread(segmentation_path))
+
+    def plot_markers_on_axis(
+        self,
+        ax: np.ndarray,
+        blind=True,
+        granule_percentile=99,
+        segmentation_cmap="nipy_spectral",
+        granule_alpha=0.4,
+    ):
+
+        if ax.shape != (3,):
             return
 
-        num_markers = len(self.markers)
-        fig, axes = plt.subplots(num_markers, 3, figsize=(15, 5 * num_markers))
-        for i, (marker_name, marker) in enumerate(self.markers.items()):
-            axes[i, 0].imshow(marker.raw_image, cmap="gray")
-            axes[i, 0].set_title(f"{marker.name} - Raw Image")
-            axes[i, 0].axis("off")
-
-            if marker.denoised_image is not None:
-                axes[i, 1].imshow(marker.denoised_image, cmap="gray")
-                axes[i, 1].set_title(f"{marker.name} - Denoised Image")
-            else:
-                axes[i, 1].text(
-                    0.5,
-                    0.5,
-                    "No Denoised Image",
-                    horizontalalignment="center",
-                    verticalalignment="center",
-                )
-            axes[i, 1].axis("off")
-
-            if marker.segmentation is not None:
-                axes[i, 2].imshow(marker.segmentation, cmap="nipy_spectral")
-                axes[i, 2].set_title(f"{marker.name} - Segmentation")
-            else:
-                axes[i, 2].text(
-                    0.5,
-                    0.5,
-                    "No Segmentation",
-                    horizontalalignment="center",
-                    verticalalignment="center",
-                )
-            axes[i, 2].axis("off")
-
-        # save as png
-        plt.tight_layout()
-        plt.savefig(
-            self.output_root / f"{self.name}_markers_segmentations.png", dpi=300
+        ax[0].imshow(self.markers["nucleus"].raw_image, cmap="gray")
+        ax[1].imshow(
+            self.markers[self.granuleA].raw_image,
+            cmap="gray",
+            vmax=np.percentile(
+                self.markers[self.granuleA].raw_image, granule_percentile
+            ),
         )
-        plt.close(fig)
+        ax[2].imshow(
+            self.markers[self.granuleB].raw_image,
+            cmap="gray",
+            vmax=np.percentile(
+                self.markers[self.granuleB].raw_image, granule_percentile
+            ),
+        )
 
-    def save_instance(self):
-        """Save the entire TheCell instance to a pickle file."""
-        instance_path = self.output_root / f"{self.uid}_TheCell_instance.pkl"
-        with open(instance_path, "wb") as f:
-            pickle.dump(self, f)
-        print(f"TheCell instance saved to {instance_path}")
+        ax[0].contour(
+            self.markers["nucleus"].segmentation.astype(bool),
+            colors="#f0be4a",
+            linewidths=0.5,
+        )
+        ax[0].contour(
+            self.markers["cell"].segmentation.astype(bool),
+            colors="#3f83bf",
+            linewidths=0.5,
+        )
 
-    def pickle_images(self):
-        """Per Marker save raw, denoised and segmentation images, in one pickle file per TheCell"""
-        images_data = {}
-        images_data["uid"] = self.uid
-        images_data["condition"] = self.condition
-        for marker_name, marker in self.markers.items():
-            images_data[marker_name] = {
-                "raw_image": marker.raw_image,
-                "denoised_image": marker.denoised_image,
-                "segmentation": marker.segmentation,
-                "compartment": marker.compartment,
+        ax[1].imshow(
+            self.markers[self.granuleA].segmentation,
+            cmap=segmentation_cmap,
+            alpha=(self.markers[self.granuleA].segmentation > 0).astype(float)
+            * granule_alpha,
+        )
+        ax[1].contour(
+            self.markers[self.granuleA].segmentation.astype(bool),
+            linewidths=0.5,
+        )
+
+        ax[2].imshow(
+            self.markers[self.granuleB].segmentation,
+            cmap=segmentation_cmap,
+            alpha=(self.markers[self.granuleB].segmentation > 0).astype(float)
+            * granule_alpha,
+        )
+        ax[2].contour(
+            self.markers[self.granuleB].segmentation.astype(bool),
+            linewidths=0.5,
+        )
+
+        ax[0].text(
+            -0.1,
+            0.5,
+            f"{self.uid}-{self.condition if not blind else ''}",
+            ha="center",
+            va="center",
+            rotation="vertical",
+            transform=ax[0].transAxes,
+        )
+
+    def clean_segmentations(self, max_granule_size=650):
+        # Fill holes in cell segmentation
+        self.markers["cell"].segmentation = ndi.binary_fill_holes(
+            self.markers["cell"].segmentation > 0
+        )
+
+        # Delete segmentations outside of the cell segmentation
+        for marker_name in [self.granuleA, self.granuleB, "nucleus"]:
+            self.markers[marker_name].segmentation[
+                self.markers["cell"].segmentation == 0
+            ] = 0
+
+        self.markers["cell"].segmentation = measure.label(
+            self.markers["cell"].segmentation
+        )
+
+        # Fill holes in nucleus segmentation
+        self.markers["nucleus"].segmentation = ndi.binary_fill_holes(
+            self.markers["nucleus"].segmentation > 0
+        )
+        self.markers["nucleus"].segmentation = measure.label(
+            self.markers["nucleus"].segmentation
+        )
+
+        for granule_marker in [self.granuleA, self.granuleB]:
+            regions = measure.regionprops(self.markers[granule_marker].segmentation)
+            for region in regions:
+                if region.area > max_granule_size:
+                    self.markers[granule_marker].segmentation[
+                        self.markers[granule_marker].segmentation == region.label
+                    ] = 0
+
+        self.log(
+            "Cleaned segmentations by filling holes and removing segmentations outside of the cell"
+        )
+
+    def compute_features(self):
+        data_collector = {
+            "uid": self.uid,
+            "condition": self.condition,
+            "stage": self.stage,
+        }
+
+        # Pass marker features to data collector
+        data_collector.update(
+            {
+                "granule_features": {
+                    self.granuleA: self.markers[self.granuleA].get_features(),
+                    self.granuleB: self.markers[self.granuleB].get_features(),
+                }
             }
-        images_path = self.output_root / f"{self.uid}_TheCell_images.pkl"
-        with open(images_path, "wb") as f:
-            pickle.dump(images_data, f)
-        print(f"Marker images saved to {images_path}")
+        )
+
+        # Get basic cell and nucleus features
+        data_collector.update(
+            {
+                "cell": {
+                    "Area": np.sum(self.markers["cell"].segmentation > 0),
+                    "SphericalVolume": features.spherical_volume(
+                        self.markers["cell"].segmentation > 0
+                    ),
+                },
+                "nucleus": {
+                    "Area": np.sum(self.markers["nucleus"].segmentation > 0),
+                    "SphericalVolume": features.spherical_volume(
+                        self.markers["nucleus"].segmentation > 0
+                    ),
+                },
+            }
+        )
+
+        # Get nuclear distance features
+        for marker_name in [self.granuleA, self.granuleB]:
+            data_collector["granule_features"][marker_name][
+                "NuclearDistanceFeatures"
+            ] = list(
+                features.nuclear_distance_features(
+                    self.markers[marker_name].segmentation,
+                    self.markers["nucleus"].segmentation,
+                    self.markers["cell"].segmentation,
+                )
+            )
+
+        # Get dnd1 and gra co-localization features
+        coloc_features = {
+            "MandersPercentile": features.manders_across_percentiles(
+                self.markers[self.granuleA].raw_image,
+                self.markers[self.granuleB].raw_image,
+                mask=self.markers["cell"].segmentation > 0,
+            ),
+            "MandersSegmentationsM1": features.manders(
+                self.markers[self.granuleA].raw_image,
+                self.markers[self.granuleB].segmentation > 0,
+                mask=self.markers["cell"].segmentation > 0,
+            ),
+            "MandersSegmentationsM2": features.manders(
+                self.markers[self.granuleB].raw_image,
+                self.markers[self.granuleA].segmentation > 0,
+                mask=self.markers["cell"].segmentation > 0,
+            ),
+            "Pearsons": features.pearsons(
+                self.markers[self.granuleA].raw_image,
+                self.markers[self.granuleB].raw_image,
+                mask=self.markers["cell"].segmentation > 0,
+            ),
+            "IoU": features.iou(
+                self.markers[self.granuleA].segmentation > 0,
+                self.markers[self.granuleB].segmentation > 0,
+            ),
+        }
+        data_collector["granule_features"]["colocalization"] = coloc_features
+
+        granule_to_cytoplasm = {
+            f"{self.granuleA}_to_cytoplasm": features.granule_to_cytoplasm_intensity_ratio(
+                self.markers[self.granuleA].raw_image,
+                self.markers[self.granuleA].segmentation,
+                self.markers["nucleus"].segmentation,
+                self.markers["cell"].segmentation,
+            ),
+            f"{self.granuleB}_to_cytoplasm": features.granule_to_cytoplasm_intensity_ratio(
+                self.markers[self.granuleB].raw_image,
+                self.markers[self.granuleB].segmentation,
+                self.markers["nucleus"].segmentation,
+                self.markers["cell"].segmentation,
+            ),
+        }
+
+        data_collector["granule_features"]["granule_to_cytoplasm"] = (
+            granule_to_cytoplasm
+        )
+
+        self.features = data_collector
+
+    def cell_segmentation_exists(self, min_cell_area=100):
+        """
+        Returns False if the cell segmentation is empty or below a certain area threshold, True otherwise
+        """
+        area_cell_segmentation = np.sum(self.markers["cell"].segmentation > 0)
+        if area_cell_segmentation < min_cell_area:  # Threshold for minimum cell area
+            return False
+        else:
+            return True
+
+    def get_granule_features(self):
+        # Check if features is an empty dict
+        if not self.features:
+            raise ValueError(
+                "Features have not been computed yet. Please run compute_features() first."
+            )
+
+        big_data = []
+        for marker_name in [self.granuleA, self.granuleB]:
+            marker_features = self.features["granule_features"][marker_name]
+            unique_granule_indices = np.unique(self.markers[marker_name].segmentation)
+            marker_feature_dict = {
+                "uid": self.uid,
+                "condition": self.condition,
+                "stage": self.stage,
+                "marker": marker_name,
+            }
+
+            for granule_idx in unique_granule_indices:
+                if granule_idx == 0:
+                    continue
+                granule_feature_dict = marker_feature_dict.copy()
+                for feature_category_name, feature_list in marker_features.items():
+                    if isinstance(feature_list, str):
+                        continue
+                    for granule_data_dict in feature_list:
+                        if granule_data_dict["GranuleIndex"] == granule_idx:
+                            granule_feature_dict["GranuleIndex"] = granule_idx
+                            granule_feature_dict["FeatureCategory"] = (
+                                feature_category_name
+                            )
+                            for (
+                                feature_name,
+                                feature_value,
+                            ) in granule_data_dict.items():
+                                if feature_name != "GranuleIndex":
+                                    granule_feature_dict[feature_name] = feature_value
+                big_data.append(granule_feature_dict)
+        return big_data
+
+    def get_cell_features(self):
+
+        data = {
+            "uid": self.uid,
+            "condition": self.condition,
+            "stage": self.stage,
+            "markers": f"{self.granuleA}, {self.granuleB}",
+        }
+
+        coloc = self.features["granule_features"]["colocalization"].copy()
+        # Remove MandersPercentile from coloc dict
+        coloc.pop("MandersPercentile", None)
+        data.update(coloc)
+
+        data.update(self.features["granule_features"]["granule_to_cytoplasm"])
+
+        for key in ["cell", "nucleus"]:
+            data.update(
+                {
+                    f"{key.capitalize()}{feature_name}": feature_value
+                    for feature_name, feature_value in self.features[key].items()
+                }
+            )
+        return data
