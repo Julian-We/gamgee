@@ -32,7 +32,7 @@ class TheCell:
 
         date_str: str = ""
         cell_condition: str = ""
-        dev_stage: str = ""
+        dev_stage: str = "24hpf"  # Defaulting to 24hpf
         for split in file_name_splits:
             if re.match(r"\d{8}", split) or re.match(r"\d{4}-\d{2}-\d{2}", split):
                 date = (
@@ -49,6 +49,10 @@ class TheCell:
 
             if "hpf" in split.lower():
                 dev_stage = split
+        if cell_condition == "":
+            for condition in conditions:
+                if condition.lower() in file_name.lower():
+                    cell_condition = condition
 
         self.uid = uid
         self.acquisition_date = date_str
